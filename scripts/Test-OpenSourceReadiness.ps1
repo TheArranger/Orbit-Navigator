@@ -89,9 +89,9 @@ if (@($forbidden).Count -gt 0) {
     LockedProjects = $projects.Count
     SigningStatus = 'Not yet enrolled with SignPath Foundation'
     ExternalPublicationGates = @(
-        'Create and verify the public repository remote',
+        'Confirm public-release rights for every original source and artwork file',
         'Assign public author/reviewer/release-approver identities',
-        'Enable a private security-reporting channel',
+        'Confirm maintainer MFA is enabled',
         'Select and configure donation destinations',
         'Complete the SignPath Foundation application and acceptance'
     )
