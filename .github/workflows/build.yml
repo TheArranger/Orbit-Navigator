@@ -1,0 +1,37 @@
+name: Build and test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install the pinned .NET SDK
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          global-json-file: global.json
+      - name: Restore
+        run: dotnet restore OrbitNavigator.sln --locked-mode
+      - name: Restore WPF interaction tests
+        run: dotnet restore tests/OrbitNavigator.Presentation.Wpf.Tests/OrbitNavigator.Presentation.Wpf.Tests.csproj --locked-mode
+      - name: Build Release
+        run: dotnet build OrbitNavigator.sln --configuration Release --no-restore --nologo
+      - name: Build WPF interaction tests
+        run: dotnet build tests/OrbitNavigator.Presentation.Wpf.Tests/OrbitNavigator.Presentation.Wpf.Tests.csproj --configuration Release --no-restore --nologo
+      - name: Test Release
+        run: dotnet test OrbitNavigator.sln --configuration Release --no-build --no-restore --nologo
+      - name: Test WPF interactions
+        run: dotnet test tests/OrbitNavigator.Presentation.Wpf.Tests/OrbitNavigator.Presentation.Wpf.Tests.csproj --configuration Release --no-build --no-restore --nologo
+      - name: Check open-source release metadata
+        shell: pwsh
+        run: ./scripts/Test-OpenSourceReadiness.ps1

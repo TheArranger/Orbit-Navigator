@@ -1,0 +1,26 @@
+.tools/
+/Orbit Navigator.exe
+app/*
+!app/.gitkeep
+artifacts/*
+!artifacts/.gitkeep
+data/*
+!data/.gitkeep
+dist/*
+!dist/.gitkeep
+installer/payloads/*
+!installer/payloads/README.md
+logs/*
+!logs/.gitkeep
+**/bin/
+**/obj/
+TestResults/
+*.user
+*.suo
+*.pfx
+*.p12
+*.key
+*.pem
+*.dpapi.json
+**/signing-private/
+**/private-signing/

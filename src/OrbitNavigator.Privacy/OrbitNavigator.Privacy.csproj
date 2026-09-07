@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>OrbitNavigator.Privacy</RootNamespace>
+    <AssemblyName>OrbitNavigator.Privacy</AssemblyName>
+    <Description>Privacy policy and local-data implementations for Orbit Navigator.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\OrbitNavigator.Contracts\OrbitNavigator.Contracts.csproj" />
+  </ItemGroup>
+</Project>

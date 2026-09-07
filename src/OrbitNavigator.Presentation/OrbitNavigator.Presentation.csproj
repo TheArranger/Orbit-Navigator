@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net10.0-windows10.0.19041.0</TargetFrameworks>
+    <RootNamespace>OrbitNavigator.Presentation</RootNamespace>
+    <AssemblyName>OrbitNavigator.Presentation</AssemblyName>
+    <Description>Framework-neutral UI state and interaction models for Orbit Navigator.</Description>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <UseWPF>true</UseWPF>
+    <DefineConstants>$(DefineConstants);ORBIT_WPF</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\OrbitNavigator.Contracts\OrbitNavigator.Contracts.csproj" />
+  </ItemGroup>
+</Project>

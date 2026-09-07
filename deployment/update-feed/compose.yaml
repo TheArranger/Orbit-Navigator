@@ -1,0 +1,50 @@
+name: orbit-navigator-update-feed
+
+services:
+  orbit-navigator-updates:
+    image: orbit-navigator-update-feed:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: never
+    container_name: orbit-navigator-updates
+    user: "101:101"
+    read_only: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8789:8080"
+    volumes:
+      - type: bind
+        source: ${ORBIT_PRIMARY_UPDATE_ROOT:?Set the isolated Primary artifact directory}
+        target: /srv/orbit-updates/primary
+        read_only: true
+      - type: bind
+        source: ${ORBIT_BETA_UPDATE_ROOT:?Set the isolated Beta artifact directory}
+        target: /srv/orbit-updates/beta
+        read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.50
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - update_feed_internal
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  update_feed_internal:
+    internal: true

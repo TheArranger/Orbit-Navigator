@@ -1,0 +1,178 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>OrbitNavigator.App</RootNamespace>
+    <AssemblyName>OrbitNavigator.App</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\assets\branding\orbit-navigator.ico</ApplicationIcon>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>OrbitNavigator.App.Tests</_Parameter1>
+    </AssemblyAttribute>
+    <ProjectReference Include="..\OrbitNavigator.Contracts\OrbitNavigator.Contracts.csproj" />
+    <ProjectReference Include="..\OrbitNavigator.Foundation\OrbitNavigator.Foundation.csproj" />
+    <ProjectReference Include="..\OrbitNavigator.Presentation\OrbitNavigator.Presentation.csproj" />
+    <ProjectReference Include="..\OrbitNavigator.ClipboardShelf.Presentation\OrbitNavigator.ClipboardShelf.Presentation.csproj" />
+    <ProjectReference Include="..\OrbitNavigator.WebViewHost\OrbitNavigator.WebViewHost.csproj" />
+    <ProjectReference Include="..\OrbitNavigator.Privacy\OrbitNavigator.Privacy.csproj" />
+    <ProjectReference Include="..\OrbitNavigator.Sync\OrbitNavigator.Sync.csproj" />
+    <ProjectReference Include="..\OrbitNavigator.Updates\OrbitNavigator.Updates.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\..\LICENSE">
+      <Link>LICENSE</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\NOTICE">
+      <Link>NOTICE</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\THIRD-PARTY-NOTICES.md">
+      <Link>THIRD-PARTY-NOTICES.md</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\PRIVACY.md">
+      <Link>PRIVACY.md</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\third-party\**\*">
+      <Link>third-party\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\loading\**\*.png">
+      <Link>assets\loading\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\orbit-navigation-field-v2.png">
+      <Link>assets\new-tab\orbit-navigation-field-v2.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\orbit-deep-space-field-v3.png">
+      <Link>assets\new-tab\orbit-deep-space-field-v3.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\bookmark-star-v1.png">
+      <Link>assets\new-tab\bookmark-star-v1.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\workspace-star-v1.png">
+      <Link>assets\new-tab\workspace-star-v1.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\branding\orbit-navigator-program-logo-v2.png">
+      <Link>assets\branding\orbit-navigator-program-logo-v2.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\favorite-star-burn-atlas-v2.png">
+      <Link>assets\new-tab\favorite-star-burn-atlas-v2.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\favorite-star-burn-atlas-v3.png">
+      <Link>assets\new-tab\favorite-star-burn-atlas-v3.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\tab-group-star-burn-atlas-v2.png">
+      <Link>assets\new-tab\tab-group-star-burn-atlas-v2.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\tab-group-star-burn-atlas-v3.png">
+      <Link>assets\new-tab\tab-group-star-burn-atlas-v3.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\orbit-deep-space-base-v4.png">
+      <Link>assets\new-tab\orbit-deep-space-base-v4.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\orbit-nebula-veil-v4.png">
+      <Link>assets\new-tab\orbit-nebula-veil-v4.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\orbit-near-starfield-v4.png">
+      <Link>assets\new-tab\orbit-near-starfield-v4.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\favorite-star-flare-atlas-v4.png">
+      <Link>assets\new-tab\favorite-star-flare-atlas-v4.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\tab-group-star-flare-atlas-v4.png">
+      <Link>assets\new-tab\tab-group-star-flare-atlas-v4.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\orbit-deep-space-base-v5.png">
+      <Link>assets\new-tab\orbit-deep-space-base-v5.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\orbit-celestial-elements-atlas-v5.png">
+      <Link>assets\new-tab\orbit-celestial-elements-atlas-v5.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\favorite-star-solar-atlas-v5.png">
+      <Link>assets\new-tab\favorite-star-solar-atlas-v5.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\workspace-star-solar-atlas-v5.png">
+      <Link>assets\new-tab\workspace-star-solar-atlas-v5.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\orbit-deep-space-base-v6-a.png">
+      <Link>assets\new-tab\orbit-deep-space-base-v6-a.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\orbit-deep-space-base-v6-b.png">
+      <Link>assets\new-tab\orbit-deep-space-base-v6-b.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\orbit-deep-space-base-v6-c.png">
+      <Link>assets\new-tab\orbit-deep-space-base-v6-c.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\orbit-celestial-frames-atlas-v6.png">
+      <Link>assets\new-tab\orbit-celestial-frames-atlas-v6.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\favorite-star-solar-atlas-v6.png">
+      <Link>assets\new-tab\favorite-star-solar-atlas-v6.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\new-tab\workspace-star-solar-atlas-v6.png">
+      <Link>assets\new-tab\workspace-star-solar-atlas-v6.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

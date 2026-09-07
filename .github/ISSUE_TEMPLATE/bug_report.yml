@@ -1,0 +1,76 @@
+name: Bug report
+description: Report a reproducible Orbit Navigator defect without sensitive browsing data.
+title: "[Bug]: "
+labels:
+  - bug
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve Orbit Navigator. Do not include passwords,
+        tokens, cookies, private-window activity, browsing history, page contents,
+        or personal information. Security vulnerabilities must use the private
+        process in SECURITY.md instead of this form.
+  - type: input
+    id: version
+    attributes:
+      label: Orbit Navigator version
+      description: Open Settings or view the installer properties to find the version.
+      placeholder: 0.1.21
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation source
+      options:
+        - Official Orbit installer
+        - Built from source
+        - Other or unknown
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use a test page or redacted example when possible.
+      placeholder: |
+        1. Open...
+        2. Select...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Optional redacted screenshot or diagnostic detail
+      description: Review every attachment and remove personal or browsing information first.
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmation
+      options:
+        - label: I reviewed this report and its attachments for sensitive information.
+          required: true
+        - label: This is an ordinary defect, not a privately reportable security vulnerability.
+          required: true

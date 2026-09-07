@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>OrbitNavigator.Contracts</RootNamespace>
+    <AssemblyName>OrbitNavigator.Contracts</AssemblyName>
+    <Description>Frozen cross-lane contracts for Orbit Navigator.</Description>
+  </PropertyGroup>
+</Project>
+

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>OrbitNavigator.WebViewHost.Smoke</RootNamespace>
+    <AssemblyName>OrbitNavigator.WebViewHost.Smoke</AssemblyName>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\OrbitNavigator.Contracts\OrbitNavigator.Contracts.csproj" />
+    <ProjectReference Include="..\OrbitNavigator.Foundation\OrbitNavigator.Foundation.csproj" />
+    <ProjectReference Include="..\OrbitNavigator.WebViewHost\OrbitNavigator.WebViewHost.csproj" />
+  </ItemGroup>
+</Project>
