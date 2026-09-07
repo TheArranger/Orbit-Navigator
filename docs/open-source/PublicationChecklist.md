@@ -1,6 +1,6 @@
 # Open-source publication and SignPath checklist
 
-## Completed locally
+## Completed
 
 - MPL-2.0 canonical license and repository-wide scope notice.
 - Trademark, privacy, security, contribution, support, and code-signing
@@ -13,24 +13,28 @@
   check.
 - Public project identity selected as Orbit Nav Pub, with Paradox (aka
   TheArranger or TheCodeArranger) as the named maintainer.
+- Public repository established at
+  `https://github.com/TheArranger/Orbit-Navigator` with MPL-2.0 detected by
+  GitHub.
+- Protected `main` requires the strict `build-test` status check and linear
+  history; force-pushes and branch deletion are disabled for administrators.
+- Private vulnerability reporting, dependency alerts, and automated security
+  fixes are enabled.
+- The public clean-checkout CI build and portable test suites pass.
 
-## Required before making the repository public
+## Required before the first public binary release
 
 - Confirm that every original source and artwork contribution may be released
   under MPL-2.0. Resolve or remove any item with uncertain ownership.
-- Select the public repository owner and URL; the current local repository has
-  no remote and no initial commit.
 - Assign named authors/committers, reviewers, and release approvers.
-- Enable branch protection, required CI, MFA, and private GitHub Security
-  Advisory reporting.
+- Confirm that the maintainer's GitHub account uses MFA.
 - Select donation destinations. Do not enable the existing in-app support
   affordance or add `.github/FUNDING.yml` until the exact destinations are
   owned and verified.
-- Select and verify the final public HTTPS bug-report destination before wiring
-  the in-app “Report a problem” command.
+- Wire the in-app “Report a problem” command only to the verified structured
+  GitHub Bug report URL and test the external-browser launch.
 - Review the published privacy notice against every enabled network adapter.
-- Run a clean public-clone build and compare managed payload hashes with the
-  reviewed local build.
+- Compare release payload hashes with the reviewed public commit and CI record.
 
 ## Required before SignPath Foundation application
 
