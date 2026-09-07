@@ -30,8 +30,8 @@ jobs:
         run: dotnet build tests/OrbitNavigator.Presentation.Wpf.Tests/OrbitNavigator.Presentation.Wpf.Tests.csproj --configuration Release --no-restore --nologo
       - name: Test Release
         run: dotnet test OrbitNavigator.sln --configuration Release --no-build --no-restore --nologo
-      - name: Test WPF interactions
-        run: dotnet test tests/OrbitNavigator.Presentation.Wpf.Tests/OrbitNavigator.Presentation.Wpf.Tests.csproj --configuration Release --no-build --no-restore --nologo
+      - name: Test portable WPF interactions
+        run: dotnet test tests/OrbitNavigator.Presentation.Wpf.Tests/OrbitNavigator.Presentation.Wpf.Tests.csproj --configuration Release --no-build --no-restore --filter "Category!=InteractiveDesktop" --nologo
       - name: Check open-source release metadata
         shell: pwsh
         run: ./scripts/Test-OpenSourceReadiness.ps1

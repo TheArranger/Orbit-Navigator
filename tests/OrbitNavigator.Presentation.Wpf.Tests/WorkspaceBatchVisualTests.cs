@@ -163,6 +163,7 @@ public sealed class WorkspaceBatchVisualTests
     });
 
     [Fact]
+    [Trait("Category", "InteractiveDesktop")]
     public void StellarWorkspaceItemsRemainReadableAboveFoldAtCommonWindowSize() => StaTest.Run(() =>
     {
         var profile = new ProfileId(Guid.NewGuid());

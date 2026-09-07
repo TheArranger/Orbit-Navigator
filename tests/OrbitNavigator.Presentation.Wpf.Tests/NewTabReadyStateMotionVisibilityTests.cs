@@ -29,6 +29,7 @@ public sealed class NewTabReadyStateMotionVisibilityTests
     }
 
     [Fact]
+    [Trait("Category", "InteractiveDesktop")]
     public void ReadySceneShowsEdgeLocalEvolutionWhileQuietCenterStaysStill() => StaTest.Run(() =>
     {
         if (SystemParameters.HighContrast)

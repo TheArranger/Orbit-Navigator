@@ -20,6 +20,15 @@ The New Tab asset builders additionally require Python and Pillow 11.3.0.
 Runtime assets are checked in, so regenerating artwork is not required to
 compile or test the application.
 
+## WPF desktop validation
+
+The complete WPF suite runs on an interactive Windows desktop as part of local
+release validation. Tests tagged `Category=InteractiveDesktop` depend on real
+monitor bounds, DPI behavior, or rendered-pixel comparison and are not stable
+on GitHub-hosted runners without an interactive display and consistent graphics
+stack. Public CI runs every other WPF interaction/accessibility test and does
+not replace the full local or installed visual acceptance gate.
+
 ## Installer inputs
 
 The offline installer additionally needs:

@@ -266,6 +266,7 @@ public sealed class OfflineAndQuickViewVisualTests
     });
 
     [Fact]
+    [Trait("Category", "InteractiveDesktop")]
     public void BrowserChromePlacesQuickViewAnchorAtLowerLeftAndForwardsActions() => StaTest.Run(() =>
     {
         var chrome = new BrowserChromeControl();
