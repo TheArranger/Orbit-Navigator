@@ -18,12 +18,16 @@ logo as its identity. See [LICENSE](LICENSE), [NOTICE](NOTICE),
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 Project stewardship is documented in [GOVERNANCE.md](GOVERNANCE.md).
 
+Project links: [Paradox portfolio](https://iamtheparadox.com/) and
+[support Orbit Navigator on Ko-fi](https://ko-fi.com/paradoxthecreator).
+
 Phase 1 contains the foundation-owned launcher, WPF/WebView2 App composition,
 build/toolchain scaffold, frozen Contracts v1.1 project, browser facades,
 tests, and offline installer authoring. The App composes the separately owned
 privacy, sync, and presentation assemblies while keeping signed-out local
-browsing available; remote sync stays fail-closed until real My Orbit adapters
-are supplied. Final visual assets remain a separate owned lane.
+browsing available. Secure My Orbit account linking is available, while
+cross-platform tab and history synchronization remains fail-closed until its
+encrypted transport, device/key lifecycle, and client adapters are complete.
 
 ## Build entry points
 

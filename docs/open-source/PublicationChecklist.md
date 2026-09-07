@@ -21,6 +21,9 @@
 - Private vulnerability reporting, dependency alerts, and automated security
   fixes are enabled.
 - The public clean-checkout CI build and portable test suites pass.
+- The verified optional donation destination is
+  `https://ko-fi.com/paradoxthecreator`; the in-app link carries no tracking
+  query. The verified maintainer portfolio is `https://iamtheparadox.com/`.
 
 ## Required before the first public binary release
 
@@ -28,9 +31,6 @@
   under MPL-2.0. Resolve or remove any item with uncertain ownership.
 - Assign named authors/committers, reviewers, and release approvers.
 - Confirm that the maintainer's GitHub account uses MFA.
-- Select donation destinations. Do not enable the existing in-app support
-  affordance or add `.github/FUNDING.yml` until the exact destinations are
-  owned and verified.
 - Wire the in-app “Report a problem” command only to the verified structured
   GitHub Bug report URL and test the external-browser launch.
 - Review the published privacy notice against every enabled network adapter.
