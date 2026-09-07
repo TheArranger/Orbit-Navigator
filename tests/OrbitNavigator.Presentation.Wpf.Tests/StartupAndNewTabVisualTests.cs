@@ -95,13 +95,22 @@ public sealed class StartupAndNewTabVisualTests
     }
 
     [Fact]
-    public void NewTabUsesDuckDuckGoAndKeepsDonationSecondary()
+    public void NewTabUsesDuckDuckGoAndKeepsProjectLinksSecondary()
     {
         StaTest.Run(() =>
         {
-            var page = new NewTabPageControl { ShowDonationLink = true, ReducedMotion = true };
+            var page = new NewTabPageControl
+            {
+                ShowDonationLink = true,
+                ShowPortfolioLink = true,
+                ReducedMotion = true,
+            };
             OmniboxTarget? target = null;
+            var donationRequests = 0;
+            var portfolioRequests = 0;
             page.NavigationRequested += (_, args) => target = args.Target;
+            page.DonationRequested += (_, _) => donationRequests++;
+            page.PortfolioRequested += (_, _) => portfolioRequests++;
             StaTest.Prepare(page);
             var search = StaTest.FindByAutomationName<TextBox>(page, "Search or enter address");
             search.Text = "quiet web browser";
@@ -112,7 +121,16 @@ public sealed class StartupAndNewTabVisualTests
             Assert.Equal(OmniboxTargetKind.Search, target?.Kind);
             Assert.Equal(
                 Visibility.Visible,
-                StaTest.FindByAutomationName<Button>(page, "Support Orbit Navigator").Visibility);
+                StaTest.FindByAutomationName<Button>(page, "Donate to Orbit Navigator on Ko-fi").Visibility);
+            Assert.Equal(
+                Visibility.Visible,
+                StaTest.FindByAutomationName<Button>(page, "Open Paradox portfolio").Visibility);
+            StaTest.FindByAutomationName<Button>(page, "Donate to Orbit Navigator on Ko-fi")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            StaTest.FindByAutomationName<Button>(page, "Open Paradox portfolio")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(1, donationRequests);
+            Assert.Equal(1, portfolioRequests);
         });
     }
 

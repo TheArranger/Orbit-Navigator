@@ -44,9 +44,23 @@ public sealed class NewTabPageControl : Grid
     private readonly Button searchButton;
     private readonly Button donationButton = new()
     {
-        Content = "Support Orbit Navigator",
+        Content = "Donate on Ko-fi",
+        MinHeight = 44,
+        Margin = new Thickness(4),
+        Visibility = Visibility.Collapsed,
+    };
+    private readonly Button portfolioButton = new()
+    {
+        Content = "Paradox portfolio",
+        MinHeight = 44,
+        Margin = new Thickness(4),
+        Visibility = Visibility.Collapsed,
+    };
+    private readonly StackPanel projectLinks = new()
+    {
+        Orientation = Orientation.Horizontal,
         HorizontalAlignment = HorizontalAlignment.Center,
-        Margin = new Thickness(0, 24, 0, 0),
+        Margin = new Thickness(0, 20, 0, 0),
     };
     private readonly Button manageBookmarksButton = new()
     {
@@ -180,6 +194,8 @@ public sealed class NewTabPageControl : Grid
 
     public event EventHandler? DonationRequested;
 
+    public event EventHandler? PortfolioRequested;
+
     public event EventHandler<BookmarkLaunchRequestedEventArgs>? BookmarkLaunchRequested;
 
     public event EventHandler? ManageBookmarksRequested;
@@ -199,7 +215,21 @@ public sealed class NewTabPageControl : Grid
     public bool ShowDonationLink
     {
         get => donationButton.Visibility == Visibility.Visible;
-        set => donationButton.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+        set
+        {
+            donationButton.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+            UpdateProjectLinksVisibility();
+        }
+    }
+
+    public bool ShowPortfolioLink
+    {
+        get => portfolioButton.Visibility == Visibility.Visible;
+        set
+        {
+            portfolioButton.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+            UpdateProjectLinksVisibility();
+        }
     }
 
     public bool ReducedMotion
@@ -415,8 +445,20 @@ public sealed class NewTabPageControl : Grid
         workspaceSurface.Child = BuildWorkspaceLayout();
         AutomationProperties.SetName(workspaceSurface, "Quick launch workspace");
         OrbitVisualTheme.ApplyButton(donationButton, OrbitButtonRole.Quiet);
-        AutomationProperties.SetName(donationButton, "Support Orbit Navigator");
+        AutomationProperties.SetName(donationButton, "Donate to Orbit Navigator on Ko-fi");
+        AutomationProperties.SetHelpText(
+            donationButton,
+            "Opens the verified ParadoxTheCreator Ko-fi page in a new Orbit Navigator tab.");
         donationButton.Click += (_, _) => DonationRequested?.Invoke(this, EventArgs.Empty);
+        OrbitVisualTheme.ApplyButton(portfolioButton, OrbitButtonRole.Quiet);
+        AutomationProperties.SetName(portfolioButton, "Open Paradox portfolio");
+        AutomationProperties.SetHelpText(
+            portfolioButton,
+            "Opens iamtheparadox.com in a new Orbit Navigator tab.");
+        portfolioButton.Click += (_, _) => PortfolioRequested?.Invoke(this, EventArgs.Empty);
+        projectLinks.Children.Add(donationButton);
+        projectLinks.Children.Add(portfolioButton);
+        UpdateProjectLinksVisibility();
 
         privateStatusSurface.Child = privateStatus;
         pageContent.Children.Add(mark);
@@ -436,7 +478,7 @@ public sealed class NewTabPageControl : Grid
         pageContent.Children.Add(privacy);
         pageContent.Children.Add(BuildVisualModeControl());
         pageContent.Children.Add(workspaceSurface);
-        pageContent.Children.Add(donationButton);
+        pageContent.Children.Add(projectLinks);
         var scroll = new ScrollViewer
         {
             Content = pageContent,
@@ -449,6 +491,12 @@ public sealed class NewTabPageControl : Grid
         Children.Add(pageShell);
         ApplyWorkspacePreferences(preferences);
     }
+
+    private void UpdateProjectLinksVisibility() =>
+        projectLinks.Visibility =
+            donationButton.Visibility == Visibility.Visible || portfolioButton.Visibility == Visibility.Visible
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
     private void UpdateResponsiveWidths()
     {

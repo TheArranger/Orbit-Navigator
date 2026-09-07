@@ -166,10 +166,13 @@ public sealed class FoundationWindow : Window
         _hosts.Add(context.TabId, initialHost.Host);
         AttachHost(initialHost.Host);
         _webSurface.Children.Add(initialHost.Host);
-        _newTabPage.ShowDonationLink = false;
+        _newTabPage.ShowDonationLink = true;
+        _newTabPage.ShowPortfolioLink = true;
         _newTabPage.CanModifyWorkspace = !_privacy.IsPrivate;
         _newTabPage.ApplyPrivateMode(_privacy.IsPrivate);
         _newTabPage.NavigationRequested += OnNewTabNavigationRequested;
+        _newTabPage.DonationRequested += OnDonationRequested;
+        _newTabPage.PortfolioRequested += OnPortfolioRequested;
         _newTabPage.BookmarkLaunchRequested += OnBookmarkLaunchRequested;
         _newTabPage.ManageBookmarksRequested += OnManageBookmarksRequested;
         _newTabPage.OpenWorkspaceRequested += OnOpenWorkspaceRequested;
@@ -408,6 +411,22 @@ public sealed class FoundationWindow : Window
 
     private async void OnBookmarkLaunchRequested(object? sender, BookmarkLaunchRequestedEventArgs args) =>
         await NavigateSelectedTabAsync(args.Bookmark.Target, args.Bookmark.Title);
+
+    private async void OnDonationRequested(object? sender, EventArgs args) =>
+        await OpenApprovedProjectLinkAsync(ApprovedProjectLink.Donation);
+
+    private async void OnPortfolioRequested(object? sender, EventArgs args) =>
+        await OpenApprovedProjectLinkAsync(ApprovedProjectLink.Portfolio);
+
+    private async Task OpenApprovedProjectLinkAsync(ApprovedProjectLink link)
+    {
+        var target = ApprovedProjectLinks.Resolve(link);
+        await CreateTabAsync(new CreateTabBrowserCommand(
+            _windowId,
+            new BrowserTabId(Guid.NewGuid()),
+            target,
+            null));
+    }
 
     private async void OnAffiliatedSiteLaunchRequested(
         object? sender,
@@ -2964,6 +2983,8 @@ public sealed class FoundationWindow : Window
         _startupLoading.RetryRequested -= OnStartupRetryRequested;
         _startupLoading.Cleared -= OnStartupLoadingCleared;
         _newTabPage.NavigationRequested -= OnNewTabNavigationRequested;
+        _newTabPage.DonationRequested -= OnDonationRequested;
+        _newTabPage.PortfolioRequested -= OnPortfolioRequested;
         _newTabPage.BookmarkLaunchRequested -= OnBookmarkLaunchRequested;
         _newTabPage.ManageBookmarksRequested -= OnManageBookmarksRequested;
         _newTabPage.OpenWorkspaceRequested -= OnOpenWorkspaceRequested;
