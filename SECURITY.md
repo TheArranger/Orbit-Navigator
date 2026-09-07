@@ -9,11 +9,11 @@ patched independently.
 ## Reporting a vulnerability
 
 Do not publish exploit details, credentials, browsing data, private-window
-activity, page contents, or sensitive logs in a public issue. Once the public
-repository is established, use its private “Report a vulnerability” Security
-Advisory form. If private reporting is unavailable, open a non-sensitive issue
-asking the maintainers to establish a private contact channel; include no
-technical exploit details in that issue.
+activity, page contents, or sensitive logs in a public issue. Use the private
+[Report a vulnerability](https://github.com/TheArranger/Orbit-Navigator/security/advisories/new)
+Security Advisory form. If private reporting is unavailable, open a
+non-sensitive issue asking the maintainer to establish a private contact
+channel; include no technical exploit details in that issue.
 
 A useful private report includes the affected Orbit version, Windows version,
 impact, minimal reproduction steps, and whether the issue is already public.

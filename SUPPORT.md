@@ -1,8 +1,9 @@
 # Support and bug reports
 
-Orbit Navigator is currently an early open-source project. Once the public
-repository is established, ordinary defects should use its structured “Bug
-report” issue form.
+Orbit Navigator is currently an early open-source project. Ordinary defects
+should use the repository's structured
+[Bug report](https://github.com/TheArranger/Orbit-Navigator/issues/new?template=bug_report.yml)
+issue form.
 
 Before reporting:
 
@@ -18,6 +19,6 @@ contents, account identifiers, or sensitive local paths.
 
 Security vulnerabilities must use the private process in `SECURITY.md`.
 
-An in-app “Report a problem” link will be enabled only after its exact public
-HTTPS destination is established and verified. Until then, Orbit must not show
-a dead, guessed, or redirectable support destination.
+The verified public destination for a future in-app “Report a problem” link is
+the structured Bug report URL above. Product wiring and release verification
+remain separate from establishing this support endpoint.
