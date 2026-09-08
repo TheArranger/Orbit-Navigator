@@ -16,7 +16,7 @@ public sealed class AesGcmSyncEnvelopeCodecTests : IDisposable
     public AesGcmSyncEnvelopeCodecTests()
     {
         _codec = new AesGcmSyncEnvelopeCodec(_registry);
-        _keyHandle = _registry.Register(RandomNumberGenerator.GetBytes(32));
+        _keyHandle = _registry.Register(_profileId, RandomNumberGenerator.GetBytes(32));
     }
 
     [Fact]
@@ -196,12 +196,37 @@ public sealed class AesGcmSyncEnvelopeCodecTests : IDisposable
             aad,
             History(entityId),
             default)).Value!;
-        var wrongHandle = _registry.Register(RandomNumberGenerator.GetBytes(32));
+        var wrongHandle = _registry.Register(_profileId, RandomNumberGenerator.GetBytes(32));
 
         var result = await _codec.DecryptAsync(context, wrongHandle, encrypted, default);
 
         Assert.False(result.IsSuccess);
         Assert.Equal(ControllerErrorCode.IntegrityFailure, result.Error?.Code);
+    }
+
+    [Fact]
+    public async Task AccountSyncProfileMayDifferFromLocalProfileButKeyBindingMustMatch()
+    {
+        var localProfile = new ProfileId(Guid.NewGuid());
+        var localBrowsing = new BrowsingContext(
+            new PrivacyContext(localProfile, new BrowserSessionId(Guid.NewGuid()), BrowserProfileMode.Normal),
+            new BrowserWindowId(Guid.NewGuid()),
+            new BrowserTabId(Guid.NewGuid()),
+            null);
+        var context = SyncOperationContext.Authorize(
+            localBrowsing,
+            new SyncOperationId(Guid.NewGuid())).Value!;
+        var entityId = new SyncEntityId(Guid.NewGuid());
+        var aad = Aad(SyncRecordKind.Upsert, SyncDataCategory.History, entityId);
+
+        var encrypted = await _codec.EncryptAsync(
+            context, _keyHandle, aad, History(entityId), default);
+        var wrongProfileHandle = _registry.Register(localProfile, RandomNumberGenerator.GetBytes(32));
+        var rejected = await _codec.EncryptAsync(
+            context, wrongProfileHandle, aad, History(entityId), default);
+
+        Assert.True(encrypted.IsSuccess);
+        Assert.Equal(ControllerErrorCode.NotFound, rejected.Error?.Code);
     }
 
     [Fact]

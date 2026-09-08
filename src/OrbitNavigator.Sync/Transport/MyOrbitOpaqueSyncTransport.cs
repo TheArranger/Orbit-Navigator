@@ -23,23 +23,29 @@ internal sealed class MyOrbitOpaqueSyncTransport : ISyncTransport, IDisposable
     internal const int MaximumResponseBytes = 32 * 1024 * 1024;
     private readonly HttpClient _http;
     private readonly IMyOrbitBearerCredentialResolver _credentials;
+    private readonly ProfileId _syncProfileId;
     private readonly bool _ownsHandler;
 
     public MyOrbitOpaqueSyncTransport(
         MyOrbitAccountProviderOptions options,
-        IMyOrbitBearerCredentialResolver credentials)
-        : this(options, credentials, CreateHandler(), ownsHandler: true)
+        IMyOrbitBearerCredentialResolver credentials,
+        ProfileId syncProfileId)
+        : this(options, credentials, syncProfileId, CreateHandler(), ownsHandler: true)
     {
     }
 
     internal MyOrbitOpaqueSyncTransport(
         MyOrbitAccountProviderOptions options,
         IMyOrbitBearerCredentialResolver credentials,
+        ProfileId syncProfileId,
         HttpMessageHandler handler,
         bool ownsHandler = false)
     {
         ArgumentNullException.ThrowIfNull(options);
         _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
+        if (syncProfileId.IsEmpty)
+            throw new ArgumentException("A bound account sync profile is required.", nameof(syncProfileId));
+        _syncProfileId = syncProfileId;
         _ownsHandler = ownsHandler;
         _http = new HttpClient(handler ?? throw new ArgumentNullException(nameof(handler)), ownsHandler)
         {
@@ -61,8 +67,8 @@ internal sealed class MyOrbitOpaqueSyncTransport : ISyncTransport, IDisposable
             return ControllerResult<SyncPushReceipt>.Failure(validation);
         if (!SyncTransferRules.ValidatePush(request).IsValid ||
             request.Purges.Count != 0 ||
-            request.Envelopes.Any(value => !AllowedLocal(value.Aad, context, request)) ||
-            request.Tombstones.Any(value => !AllowedLocal(value.Aad, context, request)))
+            request.Envelopes.Any(value => !AllowedLocal(value.Aad, request)) ||
+            request.Tombstones.Any(value => !AllowedLocal(value.Aad, request)))
         {
             return Invalid<SyncPushReceipt>();
         }
@@ -140,8 +146,8 @@ internal sealed class MyOrbitOpaqueSyncTransport : ISyncTransport, IDisposable
         var parsed = ParsePullPage(owned.Payload, request.Fence);
         if (!parsed.IsSuccess)
             return parsed;
-        return parsed.Value!.Envelopes.Any(value => !AllowedRemote(value.Aad, context, request.Fence)) ||
-            parsed.Value.Tombstones.Any(value => !AllowedRemote(value.Aad, context, request.Fence))
+        return parsed.Value!.Envelopes.Any(value => !AllowedRemote(value.Aad, request.Fence)) ||
+            parsed.Value.Tombstones.Any(value => !AllowedRemote(value.Aad, request.Fence))
             ? Integrity<SyncPullPage>()
             : parsed;
     }
@@ -415,21 +421,19 @@ internal sealed class MyOrbitOpaqueSyncTransport : ISyncTransport, IDisposable
         aad.RecordKind is SyncRecordKind.Upsert or SyncRecordKind.Tombstone &&
         aad.OperationId is null;
 
-    private static bool AllowedLocal(
+    private bool AllowedLocal(
         CanonicalSyncAad aad,
-        SyncOperationContext context,
         SyncPushRequest request) =>
         Allowed(aad) &&
-        aad.ProfileId == context.Browsing.Privacy.ProfileId &&
+        aad.ProfileId == _syncProfileId &&
         aad.DeviceId == request.DeviceId &&
         aad.ClientGeneration == request.Fence.ClientGeneration;
 
-    private static bool AllowedRemote(
+    private bool AllowedRemote(
         CanonicalSyncAad aad,
-        SyncOperationContext context,
         ClientFence fence) =>
         Allowed(aad) &&
-        aad.ProfileId == context.Browsing.Privacy.ProfileId &&
+        aad.ProfileId == _syncProfileId &&
         aad.ClientGeneration >= fence.MinimumAcceptedGeneration;
 
     private static bool ValidCursor(SyncCursor? cursor) => cursor is null ||

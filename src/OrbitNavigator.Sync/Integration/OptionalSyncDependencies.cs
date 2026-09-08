@@ -7,6 +7,7 @@ namespace OrbitNavigator.Sync.Integration;
 public sealed record OptionalSyncSession(
     OpaqueAuthHandle Authorization,
     DeviceId DeviceId,
+    ProfileId SyncProfileId,
     SyncKeyMaterialHandle KeyMaterial,
     SyncKeysetId KeysetId,
     long KeyEpoch,
@@ -15,6 +16,7 @@ public sealed record OptionalSyncSession(
     public bool IsDefined =>
         !Authorization.IsEmpty &&
         !DeviceId.IsEmpty &&
+        !SyncProfileId.IsEmpty &&
         KeyMaterial.Value != Guid.Empty &&
         KeysetId.IsDefined &&
         KeyEpoch >= 0 &&

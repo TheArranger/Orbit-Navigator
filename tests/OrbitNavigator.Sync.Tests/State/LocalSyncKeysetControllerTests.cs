@@ -1,8 +1,12 @@
+using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using OrbitNavigator.Contracts.Common;
 using OrbitNavigator.Contracts.Infrastructure;
 using OrbitNavigator.Contracts.Sync;
 using OrbitNavigator.Sync.Cryptography;
+using OrbitNavigator.Sync.Recovery;
 using OrbitNavigator.Sync.State;
 using Xunit;
 
@@ -114,6 +118,238 @@ public sealed class LocalSyncKeysetControllerTests
     }
 
     [Fact]
+    public async Task LegacyVersionOneProtectedKeysetRestoresWithLocalSyncIdentity()
+    {
+        var keyset = new SyncKeysetId(Guid.NewGuid());
+        var storage = new MemoryStorage { Payload = LegacyProtectedPayload(KnownProfile, keyset) };
+        using var registry = new InProcessSyncKeyMaterialRegistry();
+        await using var controller = new LocalSyncKeysetController(storage, new XorProtection(), registry);
+
+        var restored = await controller.InitializeAsync(
+            Browsing(BrowserProfileMode.Normal, KnownProfile),
+            new SyncOperationId(Guid.NewGuid()));
+
+        Assert.True(restored.IsSuccess);
+        Assert.Equal(KnownProfile, restored.Value!.ProfileId);
+        Assert.Equal(KnownProfile, restored.Value.SyncProfileId);
+        Assert.Equal(keyset, restored.Value.KeysetId);
+        Assert.Equal(0, restored.Value.KeyEpoch);
+    }
+
+    [Fact]
+    public async Task RecoveredAccountKeysetKeepsLocalProfileAndRestoresSyncProfileBinding()
+    {
+        var storage = new MemoryStorage();
+        var protection = new XorProtection();
+        var syncProfile = new ProfileId(Guid.NewGuid());
+        var keyset = new SyncKeysetId(Guid.NewGuid());
+        var rootBytes = RandomNumberGenerator.GetBytes(UnwrappedSyncRootKey.KeySizeBytes);
+        using var recoveredRoot = new UnwrappedSyncRootKey(rootBytes.ToArray());
+        LocalSyncKeysetSession imported;
+        using (var firstRegistry = new InProcessSyncKeyMaterialRegistry())
+        {
+            await using var controller = new LocalSyncKeysetController(storage, protection, firstRegistry);
+            var result = await controller.ImportRecoveredAsync(
+                Browsing(BrowserProfileMode.Normal, KnownProfile),
+                new SyncOperationId(Guid.NewGuid()),
+                syncProfile,
+                keyset,
+                4,
+                recoveredRoot);
+            Assert.True(result.IsSuccess);
+            imported = result.Value!;
+            Assert.Equal(KnownProfile, imported.ProfileId);
+            Assert.Equal(syncProfile, imported.SyncProfileId);
+            Assert.Equal(keyset, imported.KeysetId);
+            Assert.Equal(4, imported.KeyEpoch);
+        }
+
+        using var secondRegistry = new InProcessSyncKeyMaterialRegistry();
+        await using var restarted = new LocalSyncKeysetController(storage, protection, secondRegistry);
+        var restored = await restarted.InitializeAsync(
+            Browsing(BrowserProfileMode.Normal, KnownProfile),
+            new SyncOperationId(Guid.NewGuid()));
+
+        Assert.True(restored.IsSuccess);
+        Assert.Equal(imported.ProfileId, restored.Value!.ProfileId);
+        Assert.Equal(imported.SyncProfileId, restored.Value.SyncProfileId);
+        Assert.Equal(imported.KeysetId, restored.Value.KeysetId);
+        Assert.NotEqual(imported.KeyMaterial, restored.Value.KeyMaterial);
+        CryptographicOperations.ZeroMemory(rootBytes);
+    }
+
+    [Fact]
+    public async Task PrivateRecoveryImportIsDeniedBeforeStorageOrProtection()
+    {
+        var storage = new MemoryStorage();
+        var protection = new XorProtection();
+        using var registry = new InProcessSyncKeyMaterialRegistry();
+        await using var controller = new LocalSyncKeysetController(storage, protection, registry);
+        using var root = new UnwrappedSyncRootKey(RandomNumberGenerator.GetBytes(32));
+
+        var result = await controller.ImportRecoveredAsync(
+            Browsing(BrowserProfileMode.Private),
+            new SyncOperationId(Guid.NewGuid()),
+            new ProfileId(Guid.NewGuid()),
+            new SyncKeysetId(Guid.NewGuid()),
+            0,
+            root);
+
+        Assert.Equal(ControllerErrorCode.PolicyDenied, result.Error?.Code);
+        Assert.Equal(0, storage.CallCount);
+        Assert.Equal(0, protection.CallCount);
+        Assert.Equal(0, registry.Count);
+    }
+
+    [Fact]
+    public async Task ExistingLocalKeysetCannotBeSilentlyReplacedByRecovery()
+    {
+        var storage = new MemoryStorage();
+        using var registry = new InProcessSyncKeyMaterialRegistry();
+        await using var controller = new LocalSyncKeysetController(storage, new XorProtection(), registry);
+        var browsing = Browsing(BrowserProfileMode.Normal, KnownProfile);
+        Assert.True((await controller.InitializeAsync(
+            browsing,
+            new SyncOperationId(Guid.NewGuid()))).IsSuccess);
+        using var root = new UnwrappedSyncRootKey(RandomNumberGenerator.GetBytes(32));
+
+        var result = await controller.ImportRecoveredAsync(
+            browsing,
+            new SyncOperationId(Guid.NewGuid()),
+            new ProfileId(Guid.NewGuid()),
+            new SyncKeysetId(Guid.NewGuid()),
+            0,
+            root);
+
+        Assert.Equal(ControllerErrorCode.Conflict, result.Error?.Code);
+        Assert.Equal(1, storage.WriteCount);
+    }
+
+    [Fact]
+    public async Task RecoveryCodeTransfersSameEncryptedHistoryKeyAcrossDistinctLocalProfiles()
+    {
+        var firstLocalProfile = new ProfileId(Guid.NewGuid());
+        var secondLocalProfile = new ProfileId(Guid.NewGuid());
+        var firstStorage = new MemoryStorage();
+        var secondStorage = new MemoryStorage();
+        using var firstRegistry = new InProcessSyncKeyMaterialRegistry();
+        using var secondRegistry = new InProcessSyncKeyMaterialRegistry();
+        await using var firstController = new LocalSyncKeysetController(
+            firstStorage, new XorProtection(), firstRegistry);
+        await using var secondController = new LocalSyncKeysetController(
+            secondStorage, new XorProtection(), secondRegistry);
+        var firstBrowsing = Browsing(BrowserProfileMode.Normal, firstLocalProfile);
+        var secondBrowsing = Browsing(BrowserProfileMode.Normal, secondLocalProfile);
+        var first = (await firstController.InitializeAsync(
+            firstBrowsing, new SyncOperationId(Guid.NewGuid()))).Value!;
+        using var leases = new RecoveryCodeLeaseStore();
+        var wrapper = new RecoveryCodeKeyWrapper(leases);
+        var generated = leases.Generate(first.SyncProfileId).Value!;
+        var printableCode = new char[generated.CodeLength];
+        generated.CopyCodeTo(printableCode);
+
+        try
+        {
+            var wrapped = await firstController.WrapForRecoveryAsync(
+                firstBrowsing,
+                new SyncOperationId(Guid.NewGuid()),
+                first,
+                generated.LeaseId,
+                wrapper);
+            Assert.True(wrapped.IsSuccess);
+            var wrappedKeyset = wrapped.Value!;
+            var importedLease = leases.Import(first.SyncProfileId, printableCode).Value!;
+            using var unwrapped = wrapper.Unwrap(
+                first.SyncProfileId,
+                wrappedKeyset,
+                importedLease.LeaseId).Value!;
+            var second = await secondController.ImportRecoveredAsync(
+                secondBrowsing,
+                new SyncOperationId(Guid.NewGuid()),
+                first.SyncProfileId,
+                wrappedKeyset.KeysetId,
+                wrappedKeyset.Generation,
+                unwrapped);
+
+            Assert.True(second.IsSuccess);
+            Assert.Equal(secondLocalProfile, second.Value!.ProfileId);
+            Assert.Equal(first.SyncProfileId, second.Value.SyncProfileId);
+            Assert.NotEqual(second.Value.ProfileId, second.Value.SyncProfileId);
+
+            var entity = new SyncEntityId(Guid.NewGuid());
+            var aad = new CanonicalSyncAad(
+                SyncProtocol.CurrentProtocolVersion,
+                SyncProtocol.CurrentSchemaVersion,
+                first.SyncProfileId,
+                new DeviceId(Guid.NewGuid()),
+                first.KeysetId,
+                first.KeyEpoch,
+                SyncRecordKind.Upsert,
+                new SyncEnvelopeId(Guid.NewGuid()),
+                SyncDataCategory.History,
+                entity,
+                null,
+                0,
+                0);
+            var now = DateTimeOffset.UtcNow;
+            var record = new HistorySyncRecord(
+                entity, 1, now, "https://example.test/", "Example", now, 1);
+            var encrypted = await new AesGcmSyncEnvelopeCodec(firstRegistry).EncryptAsync(
+                SyncOperationContext.Authorize(
+                    firstBrowsing, new SyncOperationId(Guid.NewGuid())).Value!,
+                first.KeyMaterial,
+                aad,
+                record,
+                default);
+            Assert.True(encrypted.IsSuccess);
+            var decrypted = await new AesGcmSyncEnvelopeCodec(secondRegistry).DecryptAsync(
+                SyncOperationContext.Authorize(
+                    secondBrowsing, new SyncOperationId(Guid.NewGuid())).Value!,
+                second.Value.KeyMaterial,
+                encrypted.Value!,
+                default);
+
+            Assert.True(decrypted.IsSuccess);
+            Assert.Equal(record, Assert.IsType<HistorySyncRecord>(decrypted.Value));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(printableCode.AsSpan()));
+        }
+    }
+
+    [Fact]
+    public async Task PrivateRecoveryWrapIsDeniedBeforeLeaseConsumption()
+    {
+        var storage = new MemoryStorage();
+        using var registry = new InProcessSyncKeyMaterialRegistry();
+        await using var controller = new LocalSyncKeysetController(
+            storage, new XorProtection(), registry);
+        var normal = Browsing(BrowserProfileMode.Normal, KnownProfile);
+        var session = (await controller.InitializeAsync(
+            normal, new SyncOperationId(Guid.NewGuid()))).Value!;
+        using var leases = new RecoveryCodeLeaseStore();
+        var wrapper = new RecoveryCodeKeyWrapper(leases);
+        var lease = leases.Generate(session.SyncProfileId).Value!;
+
+        var denied = await controller.WrapForRecoveryAsync(
+            Browsing(BrowserProfileMode.Private, KnownProfile),
+            new SyncOperationId(Guid.NewGuid()),
+            session,
+            lease.LeaseId,
+            wrapper);
+        var accepted = await controller.WrapForRecoveryAsync(
+            normal,
+            new SyncOperationId(Guid.NewGuid()),
+            session,
+            lease.LeaseId,
+            wrapper);
+
+        Assert.Equal(ControllerErrorCode.PolicyDenied, denied.Error?.Code);
+        Assert.True(accepted.IsSuccess);
+    }
+
+    [Fact]
     public async Task MixedProfileProtectedEnvelopeFailsClosed()
     {
         var storage = new MemoryStorage();
@@ -177,6 +413,31 @@ public sealed class LocalSyncKeysetControllerTests
 
     private static readonly ProfileId KnownProfile =
         new(Guid.Parse("11111111-2222-3333-4444-555555555555"));
+
+    private static byte[] LegacyProtectedPayload(ProfileId profileId, SyncKeysetId keysetId)
+    {
+        const int innerSize = 4 + 4 + 16 + 16 + 8 + 32;
+        var inner = new byte[innerSize];
+        BinaryPrimitives.WriteUInt32LittleEndian(inner.AsSpan(0, 4), 0x524B4E4F);
+        BinaryPrimitives.WriteInt32LittleEndian(inner.AsSpan(4, 4), 1);
+        profileId.Value.TryWriteBytes(inner.AsSpan(8, 16));
+        keysetId.Value.TryWriteBytes(inner.AsSpan(24, 16));
+        BinaryPrimitives.WriteInt64LittleEndian(inner.AsSpan(40, 8), 0);
+        RandomNumberGenerator.Fill(inner.AsSpan(48, 32));
+        for (var index = 0; index < inner.Length; index++)
+            inner[index] ^= 0xa5;
+
+        var format = Encoding.ASCII.GetBytes("test-dpapi-v1");
+        var outer = new byte[16 + format.Length + inner.Length];
+        BinaryPrimitives.WriteUInt32LittleEndian(outer.AsSpan(0, 4), 0x4B534E4F);
+        BinaryPrimitives.WriteInt32LittleEndian(outer.AsSpan(4, 4), 1);
+        BinaryPrimitives.WriteInt32LittleEndian(outer.AsSpan(8, 4), format.Length);
+        BinaryPrimitives.WriteInt32LittleEndian(outer.AsSpan(12, 4), inner.Length);
+        format.CopyTo(outer, 16);
+        inner.CopyTo(outer, 16 + format.Length);
+        CryptographicOperations.ZeroMemory(inner);
+        return outer;
+    }
 
     private static BrowsingContext Browsing(
         BrowserProfileMode mode,

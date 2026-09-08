@@ -2,9 +2,12 @@ using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using OrbitNavigator.Contracts.Common;
 using OrbitNavigator.Contracts.Sync;
 
 namespace OrbitNavigator.Sync.Cryptography;
+
+internal delegate T SyncRootKeyReader<T>(ReadOnlySpan<byte> rootKey);
 
 /// <summary>
 /// Keeps sync root keys inside the process and exposes only opaque handles to callers.
@@ -24,20 +27,20 @@ public sealed class InProcessSyncKeyMaterialRegistry : IDisposable
 
     public int Count => _entries.Count;
 
-    public SyncKeyMaterialHandle Register(ReadOnlySpan<byte> rootKey)
+    public SyncKeyMaterialHandle Register(ProfileId syncProfileId, ReadOnlySpan<byte> rootKey)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (rootKey.Length != RootKeySizeBytes)
+        if (syncProfileId.IsEmpty || rootKey.Length != RootKeySizeBytes)
         {
             throw new ArgumentException(
-                $"Sync root keys must be exactly {RootKeySizeBytes} bytes.",
+                $"A sync profile and exactly {RootKeySizeBytes} root-key bytes are required.",
                 nameof(rootKey));
         }
 
         while (true)
         {
             var handle = new SyncKeyMaterialHandle(Guid.NewGuid());
-            var entry = new KeyEntry(rootKey);
+            var entry = new KeyEntry(syncProfileId, rootKey);
             if (_entries.TryAdd(handle.Value, entry))
             {
                 if (Volatile.Read(ref _disposed) == 0)
@@ -66,6 +69,7 @@ public sealed class InProcessSyncKeyMaterialRegistry : IDisposable
 
     internal bool TryDeriveCategoryKey(
         SyncKeyMaterialHandle? handle,
+        ProfileId syncProfileId,
         SyncKeysetId keysetId,
         long keyEpoch,
         SyncDataCategory category,
@@ -74,6 +78,7 @@ public sealed class InProcessSyncKeyMaterialRegistry : IDisposable
         if (Volatile.Read(ref _disposed) != 0 ||
             handle is null ||
             handle.Value == Guid.Empty ||
+            syncProfileId.IsEmpty ||
             !keysetId.IsDefined ||
             keyEpoch < 0 ||
             !SyncAllowlist.IsAllowed(category) ||
@@ -106,12 +111,27 @@ public sealed class InProcessSyncKeyMaterialRegistry : IDisposable
 
         try
         {
-            return entry.TryDerive(salt, information, destination);
+            return entry.TryDerive(syncProfileId, salt, information, destination);
         }
         finally
         {
             CryptographicOperations.ZeroMemory(salt);
         }
+    }
+
+    internal bool TryUseRootKey<T>(
+        SyncKeyMaterialHandle? handle,
+        ProfileId syncProfileId,
+        SyncRootKeyReader<T> reader,
+        out T? result)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        result = default;
+        if (Volatile.Read(ref _disposed) != 0 ||
+            handle is null || handle.Value == Guid.Empty || syncProfileId.IsEmpty ||
+            !_entries.TryGetValue(handle.Value, out var entry))
+            return false;
+        return entry.TryUse(syncProfileId, reader, out result);
     }
 
     public void Dispose()
@@ -129,22 +149,25 @@ public sealed class InProcessSyncKeyMaterialRegistry : IDisposable
     private sealed class KeyEntry : IDisposable
     {
         private readonly object _gate = new();
+        private readonly ProfileId _syncProfileId;
         private readonly byte[] _rootKey;
         private bool _disposed;
 
-        public KeyEntry(ReadOnlySpan<byte> rootKey)
+        public KeyEntry(ProfileId syncProfileId, ReadOnlySpan<byte> rootKey)
         {
+            _syncProfileId = syncProfileId;
             _rootKey = rootKey.ToArray();
         }
 
         public bool TryDerive(
+            ProfileId syncProfileId,
             ReadOnlySpan<byte> salt,
             ReadOnlySpan<byte> information,
             Span<byte> destination)
         {
             lock (_gate)
             {
-                if (_disposed)
+                if (_disposed || syncProfileId != _syncProfileId)
                     return false;
 
                 HKDF.DeriveKey(
@@ -153,6 +176,24 @@ public sealed class InProcessSyncKeyMaterialRegistry : IDisposable
                     destination,
                     salt,
                     information);
+                return true;
+            }
+        }
+
+        public bool TryUse<T>(
+            ProfileId syncProfileId,
+            SyncRootKeyReader<T> reader,
+            out T? result)
+        {
+            lock (_gate)
+            {
+                if (_disposed || syncProfileId != _syncProfileId)
+                {
+                    result = default;
+                    return false;
+                }
+
+                result = reader(_rootKey);
                 return true;
             }
         }
