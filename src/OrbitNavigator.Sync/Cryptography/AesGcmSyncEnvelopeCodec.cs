@@ -287,6 +287,7 @@ public sealed class AesGcmSyncEnvelopeCodec : ISyncEnvelopeCodec
         {
             if (!_keyRegistry.TryDeriveCategoryKey(
                     keyMaterial,
+                    aad.ProfileId,
                     aad.KeysetId,
                     aad.KeyEpoch,
                     aad.Category,
@@ -328,6 +329,7 @@ public sealed class AesGcmSyncEnvelopeCodec : ISyncEnvelopeCodec
         {
             if (!_keyRegistry.TryDeriveCategoryKey(
                     keyMaterial,
+                    aad.ProfileId,
                     aad.KeysetId,
                     aad.KeyEpoch,
                     aad.Category,
@@ -372,8 +374,6 @@ public sealed class AesGcmSyncEnvelopeCodec : ISyncEnvelopeCodec
             return Error(ControllerErrorCode.PolicyDenied, "sync.private-mode.policy-denied");
         if (aad is null || !SyncContractRules.ValidateAad(aad).IsValid || aad.RecordKind != expectedKind)
             return Error(ControllerErrorCode.InvalidRequest, "sync.crypto.aad.invalid");
-        if (context.Browsing.Privacy.ProfileId != aad.ProfileId)
-            return Error(ControllerErrorCode.InvalidRequest, "sync.crypto.context.profile-mismatch");
         if (expectedKind == SyncRecordKind.Purge &&
             requirePurgeOperationBinding &&
             aad.OperationId != context.OperationId)

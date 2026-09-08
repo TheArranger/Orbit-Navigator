@@ -462,7 +462,7 @@ public sealed class OptionalSyncCoordinator
         CanonicalSyncAad aad,
         SyncOperationContext context,
         OptionalSyncSession session) =>
-        aad.ProfileId == context.Browsing.Privacy.ProfileId &&
+        aad.ProfileId == session.SyncProfileId &&
         aad.KeysetId == session.KeysetId &&
         aad.KeyEpoch == session.KeyEpoch &&
         aad.ClientGeneration >= session.Fence.MinimumAcceptedGeneration;
@@ -471,7 +471,7 @@ public sealed class OptionalSyncCoordinator
         CanonicalSyncAad aad,
         SyncOperationContext context,
         OptionalSyncSession session) =>
-        aad.ProfileId == context.Browsing.Privacy.ProfileId &&
+        aad.ProfileId == session.SyncProfileId &&
         aad.DeviceId == session.DeviceId &&
         aad.KeysetId == session.KeysetId &&
         aad.KeyEpoch == session.KeyEpoch &&
@@ -498,7 +498,7 @@ public sealed class OptionalSyncCoordinator
         new(
             SyncProtocol.CurrentProtocolVersion,
             SyncProtocol.CurrentSchemaVersion,
-            context.Browsing.Privacy.ProfileId,
+            session.SyncProfileId,
             session.DeviceId,
             session.KeysetId,
             session.KeyEpoch,

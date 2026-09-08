@@ -6,6 +6,7 @@ using OrbitNavigator.Contracts.Common;
 using OrbitNavigator.Contracts.Infrastructure;
 using OrbitNavigator.Contracts.Sync;
 using OrbitNavigator.Sync.Cryptography;
+using OrbitNavigator.Sync.Recovery;
 
 namespace OrbitNavigator.Sync.State;
 
@@ -15,6 +16,7 @@ namespace OrbitNavigator.Sync.State;
 /// </summary>
 public sealed record LocalSyncKeysetSession(
     ProfileId ProfileId,
+    ProfileId SyncProfileId,
     SyncKeysetId KeysetId,
     long KeyEpoch,
     SyncKeyMaterialHandle KeyMaterial);
@@ -28,9 +30,12 @@ public sealed class LocalSyncKeysetController : IAsyncDisposable
 {
     private const uint OuterMagic = 0x4B534E4F; // ONSK
     private const uint InnerMagic = 0x524B4E4F; // ONKR
-    private const int FormatVersion = 1;
+    private const int OuterFormatVersion = 1;
+    private const int LegacyFormatVersion = 1;
+    private const int FormatVersion = 2;
     private const int RootKeySizeBytes = InProcessSyncKeyMaterialRegistry.RootKeySizeBytes;
-    private const int InnerSizeBytes = 4 + 4 + 16 + 16 + 8 + RootKeySizeBytes;
+    private const int LegacyInnerSizeBytes = 4 + 4 + 16 + 16 + 8 + RootKeySizeBytes;
+    private const int InnerSizeBytes = 4 + 4 + 16 + 16 + 16 + 8 + RootKeySizeBytes;
     private const int MaximumOuterSizeBytes = 16 * 1024;
 
     private static readonly ProfileStorageNamespace StorageNamespace =
@@ -64,6 +69,33 @@ public sealed class LocalSyncKeysetController : IAsyncDisposable
             browsing,
             operationId,
             context => InitializeAuthorizedAsync(context, cancellationToken));
+
+    public ValueTask<ControllerResult<LocalSyncKeysetSession>> ImportRecoveredAsync(
+        BrowsingContext browsing,
+        SyncOperationId operationId,
+        ProfileId syncProfileId,
+        SyncKeysetId keysetId,
+        long keyEpoch,
+        UnwrappedSyncRootKey rootKey,
+        CancellationToken cancellationToken = default) =>
+        SyncOperationGate.ExecuteAsync(
+            browsing,
+            operationId,
+            context => ImportRecoveredAuthorizedAsync(
+                context, syncProfileId, keysetId, keyEpoch, rootKey, cancellationToken));
+
+    public ValueTask<ControllerResult<WrappedSyncKeyset>> WrapForRecoveryAsync(
+        BrowsingContext browsing,
+        SyncOperationId operationId,
+        LocalSyncKeysetSession session,
+        RecoveryCodeLeaseId recoveryCodeLease,
+        RecoveryCodeKeyWrapper wrapper,
+        CancellationToken cancellationToken = default) =>
+        SyncOperationGate.ExecuteAsync(
+            browsing,
+            operationId,
+            context => WrapForRecoveryAuthorizedAsync(
+                context, session, recoveryCodeLease, wrapper, cancellationToken));
 
     private async ValueTask<ControllerResult<LocalSyncKeysetSession>> InitializeAuthorizedAsync(
         SyncOperationContext context,
@@ -126,6 +158,163 @@ public sealed class LocalSyncKeysetController : IAsyncDisposable
         }
     }
 
+    private async ValueTask<ControllerResult<LocalSyncKeysetSession>> ImportRecoveredAuthorizedAsync(
+        SyncOperationContext context,
+        ProfileId syncProfileId,
+        SyncKeysetId keysetId,
+        long keyEpoch,
+        UnwrappedSyncRootKey rootKey,
+        CancellationToken cancellationToken)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            return Unavailable<LocalSyncKeysetSession>();
+        if (syncProfileId.IsEmpty || !keysetId.IsDefined || keyEpoch < 0 ||
+            rootKey is null || rootKey.IsDisposed)
+            return Invalid<LocalSyncKeysetSession>();
+
+        try
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return Cancelled<LocalSyncKeysetSession>();
+        }
+
+        try
+        {
+            var localProfileId = context.Browsing.Privacy.ProfileId;
+            if (Volatile.Read(ref _disposed) != 0)
+                return Unavailable<LocalSyncKeysetSession>();
+            if (_sessions.ContainsKey(localProfileId))
+                return Conflict<LocalSyncKeysetSession>();
+
+            var profileGate = ProfileGates.GetOrAdd(
+                localProfileId.Value,
+                static _ => new SemaphoreSlim(1, 1));
+            await profileGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var address = Address(context);
+                if (!address.IsSuccess)
+                    return ControllerResult<LocalSyncKeysetSession>.Failure(address.Error!);
+                var existing = await _storage.ReadAsync(address.Value!, cancellationToken).ConfigureAwait(false);
+                if (existing.IsSuccess)
+                    return Conflict<LocalSyncKeysetSession>();
+                if (existing.Error!.Code != ControllerErrorCode.NotFound)
+                    return ControllerResult<LocalSyncKeysetSession>.Failure(existing.Error);
+
+                var inner = new byte[InnerSizeBytes];
+                byte[]? outer = null;
+                try
+                {
+                    EncodeInner(inner, localProfileId, syncProfileId, keysetId, keyEpoch);
+                    rootKey.CopyTo(inner.AsSpan(InnerSizeBytes - RootKeySizeBytes));
+                    var protectedResult = await _protection.ProtectAsync(
+                        new ProtectKeyRequest(
+                            context.Browsing.Privacy,
+                            WindowsKeyProtectionPurpose.SyncKeysetWrappingKey,
+                            inner),
+                        cancellationToken).ConfigureAwait(false);
+                    if (!protectedResult.IsSuccess)
+                        return ControllerResult<LocalSyncKeysetSession>.Failure(protectedResult.Error!);
+
+                    outer = EncodeOuter(protectedResult.Value!);
+                    var writeRequest = ProfileStorageWriteRequest.Create(address.Value!, outer);
+                    if (!writeRequest.IsSuccess)
+                        return ControllerResult<LocalSyncKeysetSession>.Failure(writeRequest.Error!);
+                    var written = await _storage.WriteAsync(writeRequest.Value!, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (!written.IsSuccess)
+                        return ControllerResult<LocalSyncKeysetSession>.Failure(written.Error!);
+                    if (written.Value!.Revision.IsEmpty)
+                        return Integrity<LocalSyncKeysetSession>();
+
+                    var handle = _registry.Register(
+                        syncProfileId,
+                        inner.AsSpan(InnerSizeBytes - RootKeySizeBytes));
+                    var session = new LocalSyncKeysetSession(
+                        localProfileId,
+                        syncProfileId,
+                        keysetId,
+                        keyEpoch,
+                        handle);
+                    _sessions.Add(localProfileId, session);
+                    return ControllerResult<LocalSyncKeysetSession>.Success(session);
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(inner);
+                    if (outer is not null)
+                        CryptographicOperations.ZeroMemory(outer);
+                }
+            }
+            finally
+            {
+                profileGate.Release();
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return Cancelled<LocalSyncKeysetSession>();
+        }
+        catch (Exception exception) when (exception is CryptographicException or ObjectDisposedException)
+        {
+            return Unavailable<LocalSyncKeysetSession>();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async ValueTask<ControllerResult<WrappedSyncKeyset>> WrapForRecoveryAuthorizedAsync(
+        SyncOperationContext context,
+        LocalSyncKeysetSession session,
+        RecoveryCodeLeaseId recoveryCodeLease,
+        RecoveryCodeKeyWrapper wrapper,
+        CancellationToken cancellationToken)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            return Unavailable<WrappedSyncKeyset>();
+        if (session is null || wrapper is null || !recoveryCodeLease.IsDefined ||
+            session.ProfileId != context.Browsing.Privacy.ProfileId ||
+            session.SyncProfileId.IsEmpty || !session.KeysetId.IsDefined ||
+            session.KeyEpoch < 0 || session.KeyMaterial.Value == Guid.Empty)
+            return Invalid<WrappedSyncKeyset>();
+
+        try
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return Cancelled<WrappedSyncKeyset>();
+        }
+
+        try
+        {
+            if (!_sessions.TryGetValue(session.ProfileId, out var active) || active != session)
+                return Conflict<WrappedSyncKeyset>();
+            return _registry.TryUseRootKey(
+                session.KeyMaterial,
+                session.SyncProfileId,
+                rootKey => wrapper.Wrap(
+                    session.SyncProfileId,
+                    session.KeysetId,
+                    session.KeyEpoch,
+                    rootKey,
+                    recoveryCodeLease),
+                out ControllerResult<WrappedSyncKeyset>? wrapped) && wrapped is not null
+                ? wrapped
+                : Unavailable<WrappedSyncKeyset>();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private async ValueTask<ControllerResult<LocalSyncKeysetSession>> LoadOrCreateAsync(
         SyncOperationContext context,
         CancellationToken cancellationToken)
@@ -155,7 +344,7 @@ public sealed class LocalSyncKeysetController : IAsyncDisposable
         byte[]? outer = null;
         try
         {
-            EncodeInner(inner, profileId, keysetId, keyEpoch);
+            EncodeInner(inner, profileId, profileId, keysetId, keyEpoch);
             RandomNumberGenerator.Fill(inner.AsSpan(InnerSizeBytes - RootKeySizeBytes));
 
             var protectedResult = await _protection.ProtectAsync(
@@ -177,9 +366,9 @@ public sealed class LocalSyncKeysetController : IAsyncDisposable
             if (written.Value!.Revision.IsEmpty)
                 return Integrity<LocalSyncKeysetSession>();
 
-            var handle = _registry.Register(inner.AsSpan(InnerSizeBytes - RootKeySizeBytes));
+            var handle = _registry.Register(profileId, inner.AsSpan(InnerSizeBytes - RootKeySizeBytes));
             return ControllerResult<LocalSyncKeysetSession>.Success(
-                new LocalSyncKeysetSession(profileId, keysetId, keyEpoch, handle));
+                new LocalSyncKeysetSession(profileId, profileId, keysetId, keyEpoch, handle));
         }
         finally
         {
@@ -217,36 +406,44 @@ public sealed class LocalSyncKeysetController : IAsyncDisposable
         ReadOnlySpan<byte> payload,
         ProfileId expectedProfileId)
     {
-        if (payload.Length != InnerSizeBytes)
+        if (payload.Length is not (InnerSizeBytes or LegacyInnerSizeBytes))
             return Integrity<LocalSyncKeysetSession>();
 
         var magic = BinaryPrimitives.ReadUInt32LittleEndian(payload[..4]);
         var version = BinaryPrimitives.ReadInt32LittleEndian(payload.Slice(4, 4));
         var profileId = new ProfileId(new Guid(payload.Slice(8, 16)));
-        var keysetId = new SyncKeysetId(new Guid(payload.Slice(24, 16)));
-        var keyEpoch = BinaryPrimitives.ReadInt64LittleEndian(payload.Slice(40, 8));
-        if (magic != InnerMagic || version != FormatVersion ||
-            profileId != expectedProfileId || !keysetId.IsDefined || keyEpoch < 0)
+        var legacy = version == LegacyFormatVersion && payload.Length == LegacyInnerSizeBytes;
+        var syncProfileId = legacy
+            ? profileId
+            : new ProfileId(new Guid(payload.Slice(24, 16)));
+        var keysetOffset = legacy ? 24 : 40;
+        var keysetId = new SyncKeysetId(new Guid(payload.Slice(keysetOffset, 16)));
+        var keyEpoch = BinaryPrimitives.ReadInt64LittleEndian(payload.Slice(keysetOffset + 16, 8));
+        if (magic != InnerMagic || !(legacy || version == FormatVersion && payload.Length == InnerSizeBytes) ||
+            profileId != expectedProfileId || syncProfileId.IsEmpty ||
+            !keysetId.IsDefined || keyEpoch < 0)
         {
             return Integrity<LocalSyncKeysetSession>();
         }
 
-        var handle = _registry.Register(payload[^RootKeySizeBytes..]);
+        var handle = _registry.Register(syncProfileId, payload[^RootKeySizeBytes..]);
         return ControllerResult<LocalSyncKeysetSession>.Success(
-            new LocalSyncKeysetSession(profileId, keysetId, keyEpoch, handle));
+            new LocalSyncKeysetSession(profileId, syncProfileId, keysetId, keyEpoch, handle));
     }
 
     private static void EncodeInner(
         Span<byte> destination,
         ProfileId profileId,
+        ProfileId syncProfileId,
         SyncKeysetId keysetId,
         long keyEpoch)
     {
         BinaryPrimitives.WriteUInt32LittleEndian(destination[..4], InnerMagic);
         BinaryPrimitives.WriteInt32LittleEndian(destination.Slice(4, 4), FormatVersion);
         profileId.Value.TryWriteBytes(destination.Slice(8, 16));
-        keysetId.Value.TryWriteBytes(destination.Slice(24, 16));
-        BinaryPrimitives.WriteInt64LittleEndian(destination.Slice(40, 8), keyEpoch);
+        syncProfileId.Value.TryWriteBytes(destination.Slice(24, 16));
+        keysetId.Value.TryWriteBytes(destination.Slice(40, 16));
+        BinaryPrimitives.WriteInt64LittleEndian(destination.Slice(56, 8), keyEpoch);
     }
 
     private static byte[] EncodeOuter(ProtectedKeyBlob blob)
@@ -254,7 +451,7 @@ public sealed class LocalSyncKeysetController : IAsyncDisposable
         var format = Encoding.ASCII.GetBytes(blob.Format);
         var result = new byte[16 + format.Length + blob.Bytes.Length];
         BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(0, 4), OuterMagic);
-        BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(4, 4), FormatVersion);
+        BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(4, 4), OuterFormatVersion);
         BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(8, 4), format.Length);
         BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(12, 4), blob.Bytes.Length);
         format.CopyTo(result, 16);
@@ -271,7 +468,7 @@ public sealed class LocalSyncKeysetController : IAsyncDisposable
         var version = BinaryPrimitives.ReadInt32LittleEndian(payload.Slice(4, 4));
         var formatLength = BinaryPrimitives.ReadInt32LittleEndian(payload.Slice(8, 4));
         var blobLength = BinaryPrimitives.ReadInt32LittleEndian(payload.Slice(12, 4));
-        if (magic != OuterMagic || version != FormatVersion ||
+        if (magic != OuterMagic || version != OuterFormatVersion ||
             formatLength is < 1 or > 64 || blobLength < 1 ||
             16 + formatLength + blobLength != payload.Length)
         {
@@ -338,4 +535,14 @@ public sealed class LocalSyncKeysetController : IAsyncDisposable
             ControllerErrorCode.Cancelled,
             "sync.keyset.cancelled",
             isRetryable: true));
+
+    private static ControllerResult<T> Invalid<T>() where T : class =>
+        ControllerResult<T>.Failure(ControllerError.Create(
+            ControllerErrorCode.InvalidRequest,
+            "sync.keyset.import-invalid"));
+
+    private static ControllerResult<T> Conflict<T>() where T : class =>
+        ControllerResult<T>.Failure(ControllerError.Create(
+            ControllerErrorCode.Conflict,
+            "sync.keyset.already-initialized"));
 }

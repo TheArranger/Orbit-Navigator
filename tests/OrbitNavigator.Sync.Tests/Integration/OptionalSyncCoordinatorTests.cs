@@ -78,6 +78,11 @@ public sealed class OptionalSyncCoordinatorTests
             pushed.Envelopes.Select(value => value.Aad.Category)
                 .Concat(pushed.Tombstones.Select(value => value.Aad.Category)),
             category => Assert.True(SyncAllowlist.IsAllowed(category)));
+        Assert.All(
+            pushed.Envelopes.Select(value => value.Aad.ProfileId)
+                .Concat(pushed.Tombstones.Select(value => value.Aad.ProfileId)),
+            profile => Assert.Equal(rig.Session.SyncProfileId, profile));
+        Assert.NotEqual(rig.Browsing.Privacy.ProfileId, rig.Session.SyncProfileId);
         Assert.Equal(1, rig.Checkpoints.CommitPushCalls);
         Assert.Equal("local-1", rig.Checkpoints.Current.PushedThrough?.Value);
     }
@@ -346,9 +351,11 @@ public sealed class OptionalSyncCoordinatorTests
                 new BrowserTabId(Guid.NewGuid()),
                 null);
             var device = new DeviceId(Guid.NewGuid());
+            var syncProfile = new ProfileId(Guid.NewGuid());
             Session = new OptionalSyncSession(
                 new OpaqueAuthHandle(Guid.NewGuid()),
                 device,
+                syncProfile,
                 new SyncKeyMaterialHandle(Guid.NewGuid()),
                 new SyncKeysetId(Guid.NewGuid()),
                 2,
@@ -425,7 +432,7 @@ public sealed class OptionalSyncCoordinatorTests
             new(
                 SyncProtocol.CurrentProtocolVersion,
                 SyncProtocol.CurrentSchemaVersion,
-                Browsing.Privacy.ProfileId,
+                Session.SyncProfileId,
                 new DeviceId(Guid.NewGuid()),
                 Session.KeysetId,
                 Session.KeyEpoch,

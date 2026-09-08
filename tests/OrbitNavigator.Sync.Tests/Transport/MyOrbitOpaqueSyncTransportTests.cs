@@ -171,6 +171,7 @@ public sealed class MyOrbitOpaqueSyncTransportTests
         return new MyOrbitOpaqueSyncTransport(
             MyOrbitAccountProviderOptions.Create(new Uri("https://my-orbit.example/")).Value!,
             resolver,
+            Profile,
             handler);
     }
 

@@ -104,6 +104,17 @@ does not rewrite its local ProfileId, move profile-scoped files, or touch
 private/session state. A conflicting identity cannot silently replace or
 reclassify an existing binding. Private calls are rejected before storage.
 
+Optional sync sessions now carry that account sync ProfileId separately from the
+local browser ProfileId. AES-GCM key handles are bound to the account sync
+identity, canonical AAD and relay validation use it, while local checkpoints and
+profile storage remain bound to the unchanged local identity. Existing version-1
+protected local keysets restore compatibly as same-profile bindings. A recovered
+root key can be imported only into an uninitialized normal local keyset; it is
+then re-protected for that Windows user and local profile. Focused tests prove
+that two different local ProfileIds can encrypt/decrypt the same history record
+through one recovery-code-wrapped account key without rewriting either local
+identity.
+
 ## Gates before app composition
 
 The following must be completed and security-reviewed before the app may stop
@@ -111,9 +122,9 @@ using `OptionalSyncComposition.SignedOut()`:
 
 1. Compose the finalized device-registration and recovery-envelope adapters into
    a separate sync-consent session. Keep account-link-only credentials separate.
-2. Carry the immutable account sync-profile binding through encryption,
-   transport validation, checkpoints, and authenticated apply without treating
-   it as permission to rewrite local profile storage.
+2. Carry the account sync-profile binding through the still-missing authenticated
+   local apply target without treating it as permission to rewrite local profile
+   storage.
 3. Add a separate sync-consent authorization flow requesting exactly
    `orbit.navigator.link`, `orbit.sync.history`, `orbit.sync.open_tabs`, and
    `orbit.sync.devices`. The ordinary account-link credential remains link-only.

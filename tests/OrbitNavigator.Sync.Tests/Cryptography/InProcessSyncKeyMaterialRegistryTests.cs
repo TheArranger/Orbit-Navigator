@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using OrbitNavigator.Contracts.Common;
 using OrbitNavigator.Contracts.Sync;
 using OrbitNavigator.Sync.Cryptography;
 using Xunit;
@@ -12,8 +13,9 @@ public sealed class InProcessSyncKeyMaterialRegistryTests
     {
         using var registry = new InProcessSyncKeyMaterialRegistry();
 
-        Assert.Throws<ArgumentException>(() => registry.Register(new byte[31]));
-        Assert.Throws<ArgumentException>(() => registry.Register(new byte[33]));
+        Assert.Throws<ArgumentException>(() => registry.Register(Profile, new byte[31]));
+        Assert.Throws<ArgumentException>(() => registry.Register(Profile, new byte[33]));
+        Assert.Throws<ArgumentException>(() => registry.Register(default, new byte[32]));
         Assert.Equal(0, registry.Count);
     }
 
@@ -21,8 +23,8 @@ public sealed class InProcessSyncKeyMaterialRegistryTests
     public void HandlesAreOpaqueUniqueAndIndividuallyRemovable()
     {
         using var registry = new InProcessSyncKeyMaterialRegistry();
-        var first = registry.Register(RandomNumberGenerator.GetBytes(32));
-        var second = registry.Register(RandomNumberGenerator.GetBytes(32));
+        var first = registry.Register(Profile, RandomNumberGenerator.GetBytes(32));
+        var second = registry.Register(Profile, RandomNumberGenerator.GetBytes(32));
 
         Assert.NotEqual(first, second);
         Assert.NotEqual(Guid.Empty, first.Value);
@@ -36,14 +38,14 @@ public sealed class InProcessSyncKeyMaterialRegistryTests
     public void DisposeInvalidatesEveryHandleAndRejectsNewKeyMaterial()
     {
         var registry = new InProcessSyncKeyMaterialRegistry();
-        registry.Register(RandomNumberGenerator.GetBytes(32));
-        registry.Register(RandomNumberGenerator.GetBytes(32));
+        registry.Register(Profile, RandomNumberGenerator.GetBytes(32));
+        registry.Register(Profile, RandomNumberGenerator.GetBytes(32));
 
         registry.Dispose();
 
         Assert.Equal(0, registry.Count);
         Assert.Throws<ObjectDisposedException>(() =>
-            registry.Register(RandomNumberGenerator.GetBytes(32)));
+            registry.Register(Profile, RandomNumberGenerator.GetBytes(32)));
     }
 
     [Fact]
@@ -51,11 +53,13 @@ public sealed class InProcessSyncKeyMaterialRegistryTests
     {
         using var registry = new InProcessSyncKeyMaterialRegistry();
         var callerKey = RandomNumberGenerator.GetBytes(32);
-        var handle = registry.Register(callerKey);
+        var handle = registry.Register(Profile, callerKey);
 
         CryptographicOperations.ZeroMemory(callerKey);
 
         Assert.NotEqual(Guid.Empty, handle.Value);
         Assert.Equal(1, registry.Count);
     }
+
+    private static readonly ProfileId Profile = new(Guid.NewGuid());
 }
