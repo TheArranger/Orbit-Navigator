@@ -1,11 +1,5 @@
 name: orbit-navigator-update-feed
 
-networks:
-  default:
-    # Static downloads need no Internet/LAN egress. The only external ingress
-    # remains the explicitly published localhost port used by Cloudflare Tunnel.
-    internal: true
-
 services:
   orbit-navigator-updates:
     image: orbit-navigator-update-feed:1.0.0
@@ -30,11 +24,14 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+      - seccomp=./seccomp-no-egress.json
     pids_limit: 64
     mem_limit: 128m
     cpus: 0.50
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--spider", "--header=Host: orbit-nav-updater.snap-it.cc", "http://127.0.0.1:8080/healthz"]
+      # Outbound connect is forbidden, including loopback. HTTP readiness is
+      # tested externally through the sole published localhost listener.
+      test: ["CMD-SHELL", "kill -0 1 && nginx -t -q -c /etc/nginx/nginx.conf"]
       interval: 30s
       timeout: 3s
       retries: 3

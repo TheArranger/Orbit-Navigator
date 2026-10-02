@@ -7,6 +7,15 @@ $ErrorActionPreference = "Stop"
 $deploymentRoot = Split-Path -Parent $PSCommandPath
 $imageName = "orbit-navigator-update-feed:isolation-test"
 $containerName = "orbit-navigator-update-feed-isolation-test"
+$seccompPath = Join-Path $deploymentRoot "seccomp-no-egress.json"
+$seccomp = Get-Content -LiteralPath $seccompPath -Raw | ConvertFrom-Json
+if ($seccomp.defaultAction -ne "SCMP_ACT_ERRNO" -or $seccomp.defaultErrnoRet -ne 1) {
+    throw "The isolation profile must retain the Moby default-deny policy."
+}
+$allowedCalls = @($seccomp.syscalls | Where-Object { $_.action -eq "SCMP_ACT_ALLOW" } | ForEach-Object { $_.names })
+foreach ($call in @("connect", "sendto", "sendmsg", "sendmmsg", "socketcall")) {
+    if ($allowedCalls -contains $call) { throw "Outbound syscall remains allowed: $call" }
+}
 
 if ($Port -lt 1024 -or $Port -gt 65535) {
     throw "Test port must be between 1024 and 65535."
@@ -36,6 +45,7 @@ docker run --detach --rm `
     --user "101:101" `
     --cap-drop ALL `
     --security-opt "no-new-privileges:true" `
+    --security-opt "seccomp=$seccompPath" `
     --publish "127.0.0.1:${Port}:8080" `
     --entrypoint sh `
     $imageName `
@@ -82,6 +92,47 @@ try {
     }
     if ((Get-Status PUT "/primary/manifest.json") -ne "403") {
         throw "The read-only Primary route accepted an unexpected method."
+    }
+
+    # HttpClient preserves the quoted ETag exactly on Windows PowerShell 5.1.
+    Add-Type -AssemblyName System.Net.Http
+    $handler = New-Object System.Net.Http.HttpClientHandler
+    $handler.UseCookies = $false
+    $handler.AllowAutoRedirect = $false
+    $client = New-Object System.Net.Http.HttpClient($handler)
+    $client.DefaultRequestHeaders.Host = "orbit-nav-updater.snap-it.cc"
+    $packageUri = "$baseUri/primary/OrbitNavigator-1.2.0.exe"
+    try {
+        $head = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Head, $packageUri)
+        $response = $client.SendAsync($head).GetAwaiter().GetResult()
+        if ([int]$response.StatusCode -ne 200 -or $null -eq $response.Headers.ETag) { throw "Package HEAD/ETag failed." }
+        $etag = $response.Headers.ETag.ToString()
+        $response.Dispose(); $head.Dispose()
+        $conditional = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Head, $packageUri)
+        [void]$conditional.Headers.TryAddWithoutValidation("If-None-Match", $etag)
+        $response = $client.SendAsync($conditional).GetAwaiter().GetResult()
+        if ([int]$response.StatusCode -ne 304) { throw "Conditional ETag request failed." }
+        $response.Dispose(); $conditional.Dispose()
+        $range = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, $packageUri)
+        [void]$range.Headers.TryAddWithoutValidation("Range", "bytes=0-6")
+        $response = $client.SendAsync($range).GetAwaiter().GetResult()
+        if ([int]$response.StatusCode -ne 206 -or $response.Content.ReadAsStringAsync().GetAwaiter().GetResult() -ne "primary") {
+            throw "Installer range download failed."
+        }
+        $response.Dispose(); $range.Dispose()
+    }
+    finally { $client.Dispose(); $handler.Dispose() }
+
+    # Sentinel destinations never receive packets: connect is rejected by seccomp.
+    foreach ($destination in @("127.0.0.1", "10.255.255.1", "1.1.1.1")) {
+        $probe = & docker exec $containerName sh -c "wget -T 2 -O /dev/null http://${destination}:8080/ 2>&1"
+        if ($LASTEXITCODE -eq 0 -or ($probe -join " ") -notmatch "Operation not permitted") {
+            throw "Outbound connect was not denied by seccomp."
+        }
+    }
+    $writeProbe = & docker exec $containerName sh -c "touch /etc/nginx/orbit-write-denial-probe 2>&1"
+    if ($LASTEXITCODE -eq 0 -or ($writeProbe -join " ") -notmatch "Read-only file system") {
+        throw "The container root filesystem is writable."
     }
 
     Write-Host "Primary update-feed isolation passed."
