@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using OrbitNavigator.Contracts.Common;
 using OrbitNavigator.Contracts.Updates;
 
@@ -58,6 +59,8 @@ public sealed class PrimaryUpdateClient : IAsyncDisposable
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private UpdateClientState? _clientState;
+    private byte[]? _cachedManifest;
+    private string? _cachedEntityTag;
     private bool _disposed;
 
     public PrimaryUpdateClient(
@@ -171,8 +174,14 @@ public sealed class PrimaryUpdateClient : IAsyncDisposable
         {
             ThrowIfDisposed();
             var state = await EnsureStateAsync(cancellationToken).ConfigureAwait(false);
-            if (Snapshot.AvailableManifest is not { } manifest)
+            if (Snapshot.Lifecycle != PrimaryUpdateLifecycle.Available ||
+                Snapshot.AvailableManifest is not { } manifest)
                 return Failure(ControllerErrorCode.PolicyDenied, "error.update.not_available");
+
+            var verified = VerifyManifest(_cachedManifest ?? [], state);
+            if (!verified.IsSuccess)
+                return await RecordFailureAsync(
+                    verified.Error!.Code, verified.Error.MessageKey, cancellationToken).ConfigureAwait(false);
 
             Publish(Snapshot with
             {
@@ -251,7 +260,10 @@ public sealed class PrimaryUpdateClient : IAsyncDisposable
 
                 state = state.WithAcceptedReleaseSequence(
                     UpdateReleaseChannel.Primary,
-                    manifest.ReleaseSequence);
+                    manifest.ReleaseSequence) with
+                {
+                    PrimaryAcceptedManifestSha256 = Convert.ToHexString(SHA256.HashData(_cachedManifest!)),
+                };
                 await _stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
                 _clientState = state;
                 Publish(Snapshot with
@@ -295,11 +307,19 @@ public sealed class PrimaryUpdateClient : IAsyncDisposable
         try
         {
             ThrowIfDisposed();
-            if (Snapshot.StagedPackage is not { } staged ||
+            if (Snapshot.Lifecycle != PrimaryUpdateLifecycle.ReadyToInstall ||
+                Snapshot.StagedPackage is not { } staged ||
                 Snapshot.PublisherTrust is not { } priorTrust)
                 return ControllerResult.Failure(ControllerError.Create(
                     ControllerErrorCode.Conflict,
                     "error.update.package_not_staged"));
+            var state = await EnsureStateAsync(cancellationToken).ConfigureAwait(false);
+            var verified = VerifyManifest(_cachedManifest ?? [], state);
+            if (!verified.IsSuccess)
+                return ControllerResult.Failure(verified.Error!);
+            if (verified.Value!.Package != staged.Package)
+                return ControllerResult.Failure(ControllerError.Create(
+                    ControllerErrorCode.IntegrityFailure, "error.update.package_invalid"));
             var integrity = await UpdatePackageIntegrity.VerifyAsync(staged, cancellationToken)
                 .ConfigureAwait(false);
             if (!integrity.IsSuccess) return integrity;
@@ -361,86 +381,125 @@ public sealed class PrimaryUpdateClient : IAsyncDisposable
                 Lifecycle = PrimaryUpdateLifecycle.Checking,
                 StatusMessage = "Checking the signed Orbit Navigator update feed...",
             });
-            var policy = new UpdateFeedTrustPolicy(
-                ManifestUri,
-                PackageOrigin,
-                "primary",
-                _currentVersion,
-                state.GetAcceptedReleaseSequence(UpdateReleaseChannel.Primary),
-                [_trustedKey]);
-            var verifier = new SignedUpdateManifestVerifier(policy, _timeProvider);
-            using var request = new HttpRequestMessage(HttpMethod.Get, ManifestUri);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
-            UpdateConditionalRequest.ApplyEntityTag(
-                request,
-                state.GetEntityTag(UpdateReleaseChannel.Primary));
-            using var response = await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken).ConfigureAwait(false);
-            if (response.StatusCode == HttpStatusCode.NotModified)
+            byte[]? manifestBytes = null;
+            string? entityTag = null;
+            // A persisted validator alone is not a cache. After restart fetch the
+            // body unconditionally; within a session 304 revalidates that body.
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                state = SuccessfulCheckState(state, now);
-                await _stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
-                _clientState = state;
-                Publish(Snapshot with
+                using var request = new HttpRequestMessage(HttpMethod.Get, ManifestUri);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+                var conditionalTag = attempt == 0 && _cachedManifest is not null
+                    ? _cachedEntityTag
+                    : null;
+                UpdateConditionalRequest.ApplyEntityTag(request, conditionalTag);
+                using var response = await _httpClient.SendAsync(
+                    request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                if (response.StatusCode == HttpStatusCode.NotModified)
                 {
-                    Lifecycle = PrimaryUpdateLifecycle.UpToDate,
-                    StatusMessage = "Orbit Navigator is up to date.",
-                    LastCheckedAtUtc = now,
-                    NextCheckNotBeforeUtc = state.NextCheckNotBeforeUtc,
-                });
-                return ControllerResult<PrimaryUpdateSnapshot>.Success(Snapshot);
-            }
-            if (response.StatusCode != HttpStatusCode.OK ||
-                response.Content.Headers.ContentLength is < 1 or > UpdateFeedTrustPolicy.DefaultMaximumManifestBytes)
-                return await RecordFailureAsync(
-                    ControllerErrorCode.Unavailable,
-                    "error.update.feed_unavailable",
-                    cancellationToken).ConfigureAwait(false);
-
-            await using var content = await response.Content.ReadAsStreamAsync(cancellationToken)
-                .ConfigureAwait(false);
-            using var buffer = new MemoryStream();
-            var block = new byte[8192];
-            while (true)
-            {
-                var read = await content.ReadAsync(block, cancellationToken).ConfigureAwait(false);
-                if (read == 0) break;
-                if (buffer.Length + read > UpdateFeedTrustPolicy.DefaultMaximumManifestBytes)
+                    if (conditionalTag is not null && _cachedManifest is not null)
+                    {
+                        manifestBytes = _cachedManifest;
+                        entityTag = _cachedEntityTag;
+                        break;
+                    }
+                    // A bodyless response without a usable cache gets one full retry.
+                    continue;
+                }
+                if (response.StatusCode != HttpStatusCode.OK ||
+                    response.Content.Headers.ContentLength is < 1 or > UpdateFeedTrustPolicy.DefaultMaximumManifestBytes)
                     return await RecordFailureAsync(
-                        ControllerErrorCode.IntegrityFailure,
-                        "error.update.manifest_size_invalid",
-                        cancellationToken).ConfigureAwait(false);
-                buffer.Write(block, 0, read);
+                        ControllerErrorCode.Unavailable, "error.update.feed_unavailable", cancellationToken,
+                        preserveVerifiedReady: true).ConfigureAwait(false);
+
+                await using var content = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+                using var buffer = new MemoryStream();
+                var block = new byte[8192];
+                while (true)
+                {
+                    var read = await content.ReadAsync(block, cancellationToken).ConfigureAwait(false);
+                    if (read == 0) break;
+                    if (buffer.Length + read > UpdateFeedTrustPolicy.DefaultMaximumManifestBytes)
+                        return await RecordFailureAsync(
+                            ControllerErrorCode.IntegrityFailure, "error.update.manifest_size_invalid", cancellationToken).ConfigureAwait(false);
+                    buffer.Write(block, 0, read);
+                }
+                manifestBytes = buffer.ToArray();
+                entityTag = UpdateConditionalRequest.ReadEntityTag(response);
+                break;
             }
-            var verified = verifier.Verify(buffer.GetBuffer().AsSpan(0, checked((int)buffer.Length)));
+            if (manifestBytes is null)
+                return await RecordFailureAsync(
+                    ControllerErrorCode.Unavailable, "error.update.feed_unavailable", cancellationToken,
+                    preserveVerifiedReady: true).ConfigureAwait(false);
+            var verified = VerifyManifest(manifestBytes, state);
             if (!verified.IsSuccess)
                 return await RecordFailureAsync(
                     verified.Error!.Code,
                     verified.Error.MessageKey,
                     cancellationToken).ConfigureAwait(false);
             var rollout = UpdateRolloutGate.Evaluate(verified.Value!, state, now);
+            var manifest = verified.Value!;
+            var installed = SignedUpdateManifestVerifier.IsSameVersion(manifest.Package.Version, _currentVersion);
+            StagedUpdatePackage? staged = null;
+            UpdatePublisherTrust? publisherTrust = null;
+            if (!installed && rollout.IsEligible)
+            {
+                var stagedPath = Path.Combine(_stagingRoot, Path.GetFileName(manifest.Package.DownloadUri.AbsolutePath));
+                if (File.Exists(stagedPath))
+                {
+                    staged = new StagedUpdatePackage(manifest.Package, stagedPath);
+                    var integrity = await UpdatePackageIntegrity.VerifyAsync(staged, cancellationToken).ConfigureAwait(false);
+                    if (!integrity.IsSuccess)
+                    {
+                        // Never reuse damaged/stale bytes. The verified offer remains
+                        // downloadable and DownloadAsync replaces this candidate.
+                        staged = null;
+                    }
+                    else
+                    {
+                        publisherTrust = await _publisherTrust.InspectAsync(stagedPath, cancellationToken).ConfigureAwait(false);
+                        if (publisherTrust is UpdatePublisherTrust.InvalidSignature or
+                            UpdatePublisherTrust.UnexpectedPublisher or UpdatePublisherTrust.VerificationUnavailable ||
+                            Snapshot.StagedPackage?.Package == staged.Package &&
+                            Snapshot.PublisherTrust is { } priorTrust && priorTrust != publisherTrust)
+                            return await RecordFailureAsync(
+                                ControllerErrorCode.IntegrityFailure, "error.update.publisher_invalid", cancellationToken).ConfigureAwait(false);
+                        state = state.WithAcceptedReleaseSequence(UpdateReleaseChannel.Primary, manifest.ReleaseSequence) with
+                        {
+                            PrimaryAcceptedManifestSha256 = Convert.ToHexString(SHA256.HashData(manifestBytes)),
+                        };
+                    }
+                }
+            }
             state = state.WithEntityTag(
                 UpdateReleaseChannel.Primary,
-                UpdateConditionalRequest.ReadEntityTag(response));
+                null);
             state = SuccessfulCheckState(state, now);
+            if (!installed && rollout.ReevaluateAtUtc is { } reevaluate &&
+                reevaluate < state.NextCheckNotBeforeUtc)
+                state = state with { NextCheckNotBeforeUtc = reevaluate };
             await _stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
             _clientState = state;
+            _cachedManifest = manifestBytes;
+            _cachedEntityTag = entityTag;
             Publish(Snapshot with
             {
-                Lifecycle = rollout.IsEligible
-                    ? PrimaryUpdateLifecycle.Available
-                    : PrimaryUpdateLifecycle.UpToDate,
-                AvailableManifest = rollout.IsEligible ? verified.Value : null,
-                StagedPackage = null,
-                PublisherTrust = null,
-                StatusMessage = rollout.IsEligible
-                    ? $"Orbit Navigator {verified.Value!.Package.Version} is available."
-                    : "This update has not reached this installation's privacy-preserving rollout bucket yet.",
+                Lifecycle = installed || !rollout.IsEligible
+                    ? PrimaryUpdateLifecycle.UpToDate
+                    : staged is not null ? PrimaryUpdateLifecycle.ReadyToInstall : PrimaryUpdateLifecycle.Available,
+                AvailableManifest = !installed && rollout.IsEligible ? manifest : null,
+                StagedPackage = staged,
+                PublisherTrust = publisherTrust,
+                StatusMessage = installed ? "Orbit Navigator is up to date."
+                    : !rollout.IsEligible ? "This update has not reached this installation's privacy-preserving rollout bucket yet."
+                    : staged is not null ? publisherTrust == UpdatePublisherTrust.Unsigned
+                        ? "Update downloaded and verified. Its Windows publisher is unknown; installation requires a separate confirmation."
+                        : "Update downloaded and verified. Installation requires your confirmation."
+                    : $"Orbit Navigator {manifest.Package.Version} is available.",
                 LastCheckedAtUtc = now,
-                NextCheckNotBeforeUtc = rollout.ReevaluateAtUtc ?? state.NextCheckNotBeforeUtc,
+                NextCheckNotBeforeUtc = state.NextCheckNotBeforeUtc,
             });
             return ControllerResult<PrimaryUpdateSnapshot>.Success(Snapshot);
         }
@@ -453,7 +512,17 @@ public sealed class PrimaryUpdateClient : IAsyncDisposable
             return await RecordFailureAsync(
                 ControllerErrorCode.Unavailable,
                 "error.update.feed_unavailable",
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                preserveVerifiedReady: true).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // HttpClient timeouts cancel its internal token, not the caller's.
+            return await RecordFailureAsync(
+                ControllerErrorCode.Unavailable,
+                "error.update.feed_unavailable",
+                cancellationToken,
+                preserveVerifiedReady: true).ConfigureAwait(false);
         }
         catch (InvalidDataException)
         {
@@ -467,6 +536,12 @@ public sealed class PrimaryUpdateClient : IAsyncDisposable
             _gate.Release();
         }
     }
+
+    private ControllerResult<VerifiedUpdateManifest> VerifyManifest(byte[] manifest, UpdateClientState state) =>
+        new SignedUpdateManifestVerifier(new UpdateFeedTrustPolicy(
+            ManifestUri, PackageOrigin, "primary", _currentVersion,
+            state.GetAcceptedReleaseSequence(UpdateReleaseChannel.Primary), [_trustedKey]), _timeProvider)
+            .VerifyCurrentFeed(manifest, state.PrimaryAcceptedManifestSha256);
 
     private async ValueTask<UpdateClientState> EnsureStateAsync(CancellationToken cancellationToken)
     {
@@ -487,9 +562,27 @@ public sealed class PrimaryUpdateClient : IAsyncDisposable
     private async ValueTask<ControllerResult<PrimaryUpdateSnapshot>> RecordFailureAsync(
         ControllerErrorCode code,
         string messageKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool preserveVerifiedReady = false)
     {
         var state = await EnsureStateAsync(cancellationToken).ConfigureAwait(false);
+        var keepReady = false;
+        if (preserveVerifiedReady && _cachedManifest is not null &&
+            Snapshot.StagedPackage is { } staged && Snapshot.PublisherTrust is { } priorTrust)
+        {
+            var verified = VerifyManifest(_cachedManifest, state);
+            if (verified.IsSuccess && verified.Value!.Package == staged.Package &&
+                (await UpdatePackageIntegrity.VerifyAsync(staged, cancellationToken).ConfigureAwait(false)).IsSuccess)
+            {
+                var trust = await _publisherTrust.InspectAsync(staged.AbsolutePath, cancellationToken).ConfigureAwait(false);
+                keepReady = trust == priorTrust && trust is UpdatePublisherTrust.Unsigned or UpdatePublisherTrust.TrustedPublisher;
+            }
+        }
+        if (!keepReady)
+        {
+            _cachedManifest = null;
+            _cachedEntityTag = null;
+        }
         var failures = checked(state.ConsecutiveFailures + 1);
         state = state with
         {
@@ -501,8 +594,13 @@ public sealed class PrimaryUpdateClient : IAsyncDisposable
         _clientState = state;
         Publish(Snapshot with
         {
-            Lifecycle = PrimaryUpdateLifecycle.Failed,
-            StatusMessage = "The update service is unavailable or returned data that could not be verified. Local browsing is unaffected.",
+            Lifecycle = keepReady ? PrimaryUpdateLifecycle.ReadyToInstall : PrimaryUpdateLifecycle.Failed,
+            AvailableManifest = keepReady ? Snapshot.AvailableManifest : null,
+            StagedPackage = keepReady ? Snapshot.StagedPackage : null,
+            PublisherTrust = keepReady ? Snapshot.PublisherTrust : null,
+            StatusMessage = keepReady
+                ? "The update feed is unavailable. The downloaded update remains verified and requires your confirmation."
+                : "The update service is unavailable or returned data that could not be verified. Local browsing is unaffected.",
             LastCheckedAtUtc = _timeProvider.GetUtcNow(),
             NextCheckNotBeforeUtc = state.NextCheckNotBeforeUtc,
         });

@@ -22,6 +22,10 @@ public sealed record UpdateClientState(
     public const int CurrentSchemaVersion = 1;
     public const int InstallSeedBytes = 32;
 
+    // Bound to the exact fully verified signed envelope accepted on download.
+    // Older state files cannot authorize replay of an uninstalled release.
+    public string? PrimaryAcceptedManifestSha256 { get; init; }
+
     public static UpdateClientState CreateNew()
     {
         Span<byte> seed = stackalloc byte[InstallSeedBytes];
@@ -103,6 +107,9 @@ public sealed record UpdateClientState(
             UpdateReleaseChannel.Primary => this with
             {
                 PrimaryAcceptedReleaseSequence = releaseSequence,
+                PrimaryAcceptedManifestSha256 = releaseSequence == current
+                    ? PrimaryAcceptedManifestSha256
+                    : null,
             },
             UpdateReleaseChannel.Beta => this with
             {
@@ -144,6 +151,12 @@ public sealed record UpdateClientState(
         _ = GetInstallSeed();
         UpdateConditionalRequest.ValidateEntityTag(PrimaryEntityTag);
         UpdateConditionalRequest.ValidateEntityTag(BetaEntityTag);
+        if (PrimaryAcceptedManifestSha256 is { } identity &&
+            (PrimaryAcceptedReleaseSequence == 0 || identity.Length != 64 ||
+                !identity.All(Uri.IsHexDigit)))
+        {
+            throw new InvalidDataException("The accepted update manifest identity is invalid.");
+        }
     }
 }
 
