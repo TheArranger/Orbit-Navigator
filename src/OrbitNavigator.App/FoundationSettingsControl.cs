@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using OrbitNavigator.App.Accounts;
 using OrbitNavigator.Contracts.Browser;
 using OrbitNavigator.Contracts.Common;
@@ -42,6 +43,7 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
         _myOrbitAccountSettings = myOrbitAccountSettings ?? throw new ArgumentNullException(nameof(myOrbitAccountSettings));
         _updates = updates ?? throw new ArgumentNullException(nameof(updates));
         _accountContext = accountContext ?? throw new ArgumentNullException(nameof(accountContext));
+        ApplySettingsSurfaceTheme(this);
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -50,7 +52,7 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
         var result = await _settings.GetAsync(_context, cancellationToken);
         if (!result.IsSuccess)
         {
-            Content = new ScrollViewer { Content = BasePanel("Settings", "Settings could not be loaded.") };
+            Content = CreateSettingsScrollSurface(BasePanel("Settings", "Settings could not be loaded."));
             return;
         }
 
@@ -93,6 +95,7 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
             Margin = new Thickness(0, 12, 0, 6),
             IsEnabled = !_context.IsPrivate,
         };
+        ApplySettingsCheckBoxTheme(restore);
         var ask = new CheckBox
         {
             Content = "Ask where to save downloads",
@@ -100,6 +103,7 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
             Margin = new Thickness(0, 6, 0, 6),
             IsEnabled = !_context.IsPrivate,
         };
+        ApplySettingsCheckBoxTheme(ask);
         var automatic = new CheckBox
         {
             Content = "Check for Orbit Navigator updates automatically",
@@ -108,21 +112,27 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
             IsEnabled = false,
             ToolTip = "Orbit uses a randomized local schedule and sends no identifying update telemetry.",
         };
+        ApplySettingsCheckBoxTheme(automatic);
         var updateDisclosure = new TextBlock
         {
             Text = "Orbit verifies a pinned manifest signature, version sequence, package size, and SHA-256 hash before offering an update. Updates never install silently. Until Windows-trusted signing is available, each installer requires a separate confirmation and Windows may show an unknown-publisher warning.",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 8),
+            Foreground = SettingsSecondaryTextBrush,
         };
         var updateStatus = new TextBlock
         {
             Text = _updates.Snapshot.StatusMessage,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 8, 0, 8),
+            Foreground = SettingsTextBrush,
         };
         var checkUpdate = new Button { Content = "Check for updates", MinWidth = 150, Margin = new Thickness(0, 0, 8, 0) };
         var downloadUpdate = new Button { Content = "Download verified update", MinWidth = 185, Margin = new Thickness(0, 0, 8, 0) };
         var installUpdate = new Button { Content = "Install verified update...", MinWidth = 180 };
+        ApplySettingsButtonTheme(checkUpdate, OrbitButtonRole.Quiet);
+        ApplySettingsButtonTheme(downloadUpdate, OrbitButtonRole.Quiet);
+        ApplySettingsButtonTheme(installUpdate, OrbitButtonRole.Quiet);
         var updateActions = new WrapPanel();
         updateActions.Children.Add(checkUpdate);
         updateActions.Children.Add(downloadUpdate);
@@ -178,7 +188,12 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
             HorizontalAlignment = HorizontalAlignment.Left,
             IsEnabled = !_context.IsPrivate,
         };
-        var status = new TextBlock { Margin = new Thickness(0, 10, 0, 0) };
+        ApplySettingsButtonTheme(save, OrbitButtonRole.Primary);
+        var status = new TextBlock
+        {
+            Margin = new Thickness(0, 10, 0, 0),
+            Foreground = SettingsTextBrush,
+        };
         save.Click += async (_, _) =>
         {
             if (_settingsSnapshot is null) return;
@@ -199,7 +214,11 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
         var panel = BasePanel("Settings", _context.IsPrivate
             ? "Private windows use normal-profile settings read-only."
             : "Privacy-preserving local browser settings.");
-        panel.Children.Add(new TextBlock { Text = "Search provider: DuckDuckGo" });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Search provider: DuckDuckGo",
+            Foreground = SettingsTextBrush,
+        });
         panel.Children.Add(restore);
         panel.Children.Add(ask);
         panel.Children.Add(automatic);
@@ -209,7 +228,7 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
         panel.Children.Add(save);
         panel.Children.Add(status);
         panel.Children.Add(_account);
-        return new ScrollViewer { Content = panel };
+        return CreateSettingsScrollSurface(panel);
     }
 
     private Action<PrimaryUpdateSnapshot>? _renderUpdate;
@@ -225,13 +244,64 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
             Text = heading,
             FontSize = 24,
             FontWeight = FontWeights.SemiBold,
+            Foreground = SettingsTextBrush,
         });
         panel.Children.Add(new TextBlock
         {
             Text = description,
             Margin = new Thickness(0, 6, 0, 14),
             TextWrapping = TextWrapping.Wrap,
+            Foreground = SettingsSecondaryTextBrush,
         });
         return panel;
+    }
+
+    internal static Brush SettingsBackgroundBrush =>
+        SystemParameters.HighContrast ? SystemColors.WindowBrush : OrbitVisualTheme.Canvas;
+
+    internal static Brush SettingsTextBrush =>
+        SystemParameters.HighContrast ? SystemColors.WindowTextBrush : OrbitVisualTheme.Ink;
+
+    internal static Brush SettingsSecondaryTextBrush =>
+        SystemParameters.HighContrast ? SystemColors.WindowTextBrush : OrbitVisualTheme.MutedInk;
+
+    internal static void ApplySettingsSurfaceTheme(Control surface)
+    {
+        ArgumentNullException.ThrowIfNull(surface);
+        surface.Background = SettingsBackgroundBrush;
+        surface.Foreground = SettingsTextBrush;
+        surface.FontFamily = new FontFamily("Segoe UI Variable Text, Segoe UI");
+    }
+
+    internal static void ApplySettingsCheckBoxTheme(CheckBox checkBox)
+    {
+        ArgumentNullException.ThrowIfNull(checkBox);
+        checkBox.Foreground = SettingsTextBrush;
+        checkBox.Background = Brushes.Transparent;
+        checkBox.MinHeight = 32;
+        checkBox.VerticalContentAlignment = VerticalAlignment.Center;
+    }
+
+    internal static void ApplySettingsButtonTheme(Button button, OrbitButtonRole role)
+    {
+        ArgumentNullException.ThrowIfNull(button);
+        OrbitVisualTheme.ApplyButton(button, role);
+        button.MinHeight = 44;
+        button.Padding = new Thickness(14, 8, 14, 8);
+        button.UseLayoutRounding = true;
+        button.SnapsToDevicePixels = true;
+    }
+
+    internal static ScrollViewer CreateSettingsScrollSurface(FrameworkElement content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        return new ScrollViewer
+        {
+            Content = content,
+            Background = SettingsBackgroundBrush,
+            Foreground = SettingsTextBrush,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        };
     }
 }

@@ -8,15 +8,15 @@
       "orbitnavigator.foundation": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.1.25, )"
+          "OrbitNavigator.Contracts": "[0.1.26, )"
         }
       },
       "orbitnavigator.webviewhost": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Web.WebView2": "[1.0.4129.50, )",
-          "OrbitNavigator.Contracts": "[0.1.25, )",
-          "OrbitNavigator.Foundation": "[0.1.25, )"
+          "OrbitNavigator.Contracts": "[0.1.26, )",
+          "OrbitNavigator.Foundation": "[0.1.26, )"
         }
       },
       "Microsoft.Web.WebView2": {
