@@ -29,10 +29,15 @@ CPU/memory/PIDs, and no Docker socket or secrets. It exposes no upload, director
 listing, admin, proxy, CGI, wildcard host, or dynamic route. Only the exact Primary
 manifest and versioned installer filename pattern are downloadable.
 
-The Compose network is internal, with no default route for Internet or LAN egress;
-localhost port 8789 is still the only published listener. Keep the Windows artifact
-directory ACL restricted to the publishing account, SYSTEM, and Administrators.
-Do not inherit the broad ProgramData Users write permission into this directory.
+Keep the Windows artifact directory ACL restricted to the publishing account,
+SYSTEM, and Administrators. Do not inherit the broad ProgramData Users write
+permission into this directory. Do not claim host/LAN egress isolation solely from
+the read-only container configuration. The pinned default-deny seccomp profile
+additionally blocks outbound connection/datagram system calls, including the
+32-bit socketcall alternative. See [SECURITY-PROFILE.md](SECURITY-PROFILE.md).
+The bridge network retains localhost ingress; no other container or host firewall
+is changed. An internal-only Compose network makes the published localhost listener
+unreachable on this Windows Docker Desktop host and must not be enabled blindly.
 
 ## Cloudflare Tunnel ingress
 
