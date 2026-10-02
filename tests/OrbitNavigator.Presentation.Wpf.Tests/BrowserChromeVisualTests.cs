@@ -913,7 +913,7 @@ public sealed class BrowserChromeVisualTests
             var menu = Assert.IsType<ContextMenu>(menuButton.ContextMenu);
             var commands = menu.Items.OfType<MenuItem>().ToArray();
 
-            Assert.Equal(9, commands.Length);
+            Assert.Equal(10, commands.Length);
             Assert.All(commands, command =>
             {
                 Assert.False(command.IsEnabled);
@@ -936,6 +936,8 @@ public sealed class BrowserChromeVisualTests
                 new Dictionary<BrowserTabGroupId, TabGroupPresentation>());
             chrome.BrowserCommandRequested += (_, _) => { };
             chrome.PrivateWindowRequested += (_, _) => { };
+            BrowserWorkspacePreferences? requestedPreferences = null;
+            chrome.WorkspacePreferencesChanged += (_, args) => requestedPreferences = args.Preferences;
             UtilitySurfaceRequestedEventArgs? requested = null;
             chrome.UtilitySurfaceRequested += (_, args) => requested = args;
             chrome.OfflineReadingActionRequested += (_, _) => { };
@@ -964,6 +966,11 @@ public sealed class BrowserChromeVisualTests
             var settings = commands.Single(command => AutomationProperties.GetName(command) == "Settings");
             settings.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Assert.Equal(InternalPageKind.Settings, requested?.Page);
+
+            var addressBar = commands.Single(command => AutomationProperties.GetName(command) == "Show address bar");
+            addressBar.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Assert.NotNull(requestedPreferences);
+            Assert.False(requestedPreferences.ShowAddressBar);
         });
     }
 
