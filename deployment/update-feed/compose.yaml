@@ -1,5 +1,11 @@
 name: orbit-navigator-update-feed
 
+networks:
+  default:
+    # Static downloads need no Internet/LAN egress. The only external ingress
+    # remains the explicitly published localhost port used by Cloudflare Tunnel.
+    internal: true
+
 services:
   orbit-navigator-updates:
     image: orbit-navigator-update-feed:1.0.0
