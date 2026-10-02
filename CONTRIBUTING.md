@@ -1,8 +1,9 @@
 # Contributing to Orbit Navigator
 
-Thank you for helping improve Orbit Navigator. Contributions are accepted
-under the Mozilla Public License 2.0; no commercial dual-license grant is
-requested.
+Thank you for helping improve Orbit Navigator. The project is open source
+under the MIT License. Forks and modified distributions are permitted under
+that license; distinguish unofficial builds from official Orbit Nav Pub
+releases without implying endorsement.
 
 ## Before submitting work
 
@@ -15,7 +16,11 @@ requested.
 4. Keep new network behavior opt-in, narrowly scoped, and covered by negative
    tests. Do not introduce telemetry.
 5. Confirm that you have the right to submit every source and asset in the
-   change and that it may be distributed under MPL-2.0.
+   change. Contributions are submitted under the same MIT License as the
+   project unless an existing third-party license is clearly identified and
+   accepted during review. No copyright assignment or separate contributor
+   license agreement is required. Retain applicable copyright and license
+   notices for contributions and dependencies.
 
 ## Build and test
 

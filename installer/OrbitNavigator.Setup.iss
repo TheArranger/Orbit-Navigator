@@ -15,6 +15,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 DefaultDirName={localappdata}\Programs\Orbit Navigator
 DefaultGroupName=Orbit Navigator
 DisableProgramGroupPage=yes
+DisableFinishedPage=yes
 PrivilegesRequired=lowest
 OutputDir=..\dist
 OutputBaseFilename=Setup

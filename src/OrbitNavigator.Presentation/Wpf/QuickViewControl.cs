@@ -13,6 +13,9 @@ namespace OrbitNavigator.Presentation.Wpf;
 
 public sealed class QuickViewControl : Grid
 {
+    public const double ViewportInset = 14;
+    public const double LauncherGap = 8;
+    public const double LauncherButtonSize = 48;
     public const double InitialWidthRatio = 0.30;
     public const double InitialHeightRatio = 0.30;
     public const double MaximumViewportRatio = 0.75;
@@ -38,6 +41,7 @@ public sealed class QuickViewControl : Grid
         Visibility = Visibility.Collapsed,
     };
     private readonly Button anchor;
+    private readonly Border launcher = new();
     private readonly Button expand;
     private readonly Button close;
     private readonly TextBlock title = new() { TextTrimming = TextTrimming.CharacterEllipsis };
@@ -67,9 +71,10 @@ public sealed class QuickViewControl : Grid
         AutomationProperties.SetName(this, "Quick View");
 
         anchor = CreateIconButton(OrbitIconKind.Search, "Submit Quick View search or address");
-        anchor.Content = IconLabel(OrbitIconKind.Search, "Quick View search");
-        anchor.MinWidth = 154;
-        anchor.MinHeight = 48;
+        anchor.MinWidth = LauncherButtonSize;
+        anchor.Width = LauncherButtonSize;
+        anchor.MinHeight = LauncherButtonSize;
+        anchor.Height = LauncherButtonSize;
         AutomationProperties.SetHelpText(anchor,
             "Submit the adjacent search or address in Quick View. When the field is empty, open the current page.");
         anchor.Click += (_, _) => RequestOpenOrNavigate();
@@ -79,7 +84,7 @@ public sealed class QuickViewControl : Grid
         surface = BuildSurface();
         BuildLayout();
         overlayPopup.PlacementTarget = this;
-        overlayPopup.CustomPopupPlacementCallback = PlaceOverlayAtLowerLeft;
+        overlayPopup.CustomPopupPlacementCallback = PlaceOverlayAtLowerRight;
         Loaded += (_, _) => RefreshOverlayPopup();
         Unloaded += (_, _) => overlayPopup.IsOpen = false;
         SizeChanged += (_, _) => RefreshOverlayPlacement();
@@ -97,6 +102,7 @@ public sealed class QuickViewControl : Grid
     public Size CurrentSurfaceSize => new(surface.Width, surface.Height);
     public FrameworkElement WebContentHost => webContent;
     public Button AnchorButton => anchor;
+    public Border LauncherSurface => launcher;
     public TextBox SearchBox => search;
     public Popup OverlayPopup => overlayPopup;
 
@@ -160,7 +166,9 @@ public sealed class QuickViewControl : Grid
             return;
         }
         ownerViewport = viewport;
+        UpdateSearchWidth();
         UpdateSurfaceSize();
+        RefreshOverlayPlacement();
     }
 
     public void ResetForFreshUse()
@@ -177,6 +185,8 @@ public sealed class QuickViewControl : Grid
     {
         overlayLayout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         overlayLayout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        // The popup must remain opaque so its hosted browser HWND renders
+        // correctly; each visible launcher/surface then provides the shape.
         overlayLayout.Background = SystemParameters.HighContrast
             ? SystemColors.WindowBrush
             : OrbitVisualTheme.Canvas;
@@ -185,50 +195,54 @@ public sealed class QuickViewControl : Grid
         AutomationProperties.SetLiveSetting(submitFeedback, AutomationLiveSetting.Polite);
         overlayLayout.Children.Add(submitFeedback);
 
-        var launcher = new Border
-        {
-            Background = SystemParameters.HighContrast
-                ? SystemColors.ControlBrush
-                : new LinearGradientBrush(
-                    Color.FromArgb(250, 18, 37, 43),
-                    Color.FromArgb(250, 30, 45, 57),
-                    new Point(0, .5),
-                    new Point(1, .5)),
-            BorderBrush = SystemParameters.HighContrast ? SystemColors.ControlTextBrush : OrbitVisualTheme.WaypointGold,
-            BorderThickness = new Thickness(SystemParameters.HighContrast ? 2 : 2),
-            CornerRadius = new CornerRadius(18),
-            Padding = new Thickness(5),
-            Margin = new Thickness(0, 8, 0, 0),
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
-        AutomationProperties.SetName(launcher, "Quick View lower-left launcher");
+        launcher.BorderBrush = SystemParameters.HighContrast ? SystemColors.ControlTextBrush : OrbitVisualTheme.WaypointGold;
+        launcher.BorderThickness = new Thickness(2);
+        launcher.CornerRadius = new CornerRadius(26);
+        launcher.Padding = new Thickness(3);
+        launcher.Margin = new Thickness(0, LauncherGap, 0, 0);
+        launcher.HorizontalAlignment = HorizontalAlignment.Right;
+        launcher.UseLayoutRounding = true;
+        launcher.SnapsToDevicePixels = true;
+        UpdateLauncherVisual(false);
+        AutomationProperties.SetName(launcher, "Quick View lower-right launcher");
         AutomationProperties.SetItemStatus(launcher, "Available on this normal web page");
         var launcherRow = new StackPanel { Orientation = Orientation.Horizontal };
-        launcherRow.Children.Add(anchor);
         search.PreviewKeyDown += OnSearchPreviewKeyDown;
         search.LostKeyboardFocus += (_, _) => CollapseSearchIfIdle();
         AutomationProperties.SetName(search, "Quick View search or address");
         AutomationProperties.SetHelpText(search, "Type a search or web address, then press Enter to open it in Quick View.");
         launcherRow.Children.Add(search);
+        // Search precedes the fixed launcher so revealing it expands to the
+        // left while the magnifier remains anchored to the same screen edge.
+        launcherRow.Children.Add(anchor);
         launcher.Child = launcherRow;
-        launcher.MouseEnter += (_, _) => ExpandSearch();
-        launcher.MouseLeave += (_, _) => CollapseSearchIfIdle();
+        launcher.MouseEnter += (_, _) =>
+        {
+            UpdateLauncherVisual(true);
+            SetSearchExpanded(true);
+        };
+        launcher.MouseLeave += (_, _) =>
+        {
+            UpdateLauncherVisual(false);
+            CollapseSearchIfIdle();
+        };
         Grid.SetRow(launcher, 1);
         overlayLayout.Children.Add(launcher);
         overlayPopup.Child = overlayLayout;
         Children.Add(overlayPopup);
     }
 
-    private CustomPopupPlacement[] PlaceOverlayAtLowerLeft(
+    private CustomPopupPlacement[] PlaceOverlayAtLowerRight(
         Size popupSize,
         Size targetSize,
         Point offset)
     {
-        const double inset = 14;
         return
         [
             new CustomPopupPlacement(
-                new Point(inset, Math.Max(inset, targetSize.Height - popupSize.Height - inset)),
+                new Point(
+                    Math.Max(0, targetSize.Width - popupSize.Width - ViewportInset),
+                    Math.Max(0, targetSize.Height - popupSize.Height - ViewportInset)),
                 PopupPrimaryAxis.None),
         ];
     }
@@ -266,10 +280,13 @@ public sealed class QuickViewControl : Grid
             CornerRadius = new CornerRadius(14),
             Visibility = Visibility.Collapsed,
             ClipToBounds = true,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            UseLayoutRounding = true,
+            SnapsToDevicePixels = true,
         };
         AutomationProperties.SetName(shell, "Quick View mini-browser");
         AutomationProperties.SetHelpText(shell,
-            "A temporary mini-browser anchored to the lower-left of the current browser window.");
+            "A temporary mini-browser anchored to the lower-right of the current browser window.");
         var layout = new Grid();
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -293,7 +310,7 @@ public sealed class QuickViewControl : Grid
         resize.DragCompleted += OnResizeDragCompleted;
         AutomationProperties.SetName(resize, "Resize Quick View");
         AutomationProperties.SetHelpText(resize,
-            "Drag up and right to grow Quick View, or down and left to shrink it.");
+            "Drag up and left to grow Quick View, or down and right to shrink it.");
         Grid.SetColumn(actions, 1);
         header.Children.Add(actions);
         layout.Children.Add(header);
@@ -338,13 +355,25 @@ public sealed class QuickViewControl : Grid
         }
     }
 
-    private void ExpandSearch() => search.Visibility = Visibility.Visible;
+    private void ExpandSearch() => SetSearchExpanded(true);
+
+    private void SetSearchExpanded(bool expanded)
+    {
+        search.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+        if (expanded)
+        {
+            UpdateSearchWidth();
+        }
+
+        overlayLayout.UpdateLayout();
+        RefreshOverlayPlacement();
+    }
 
     private void CollapseSearchIfIdle()
     {
         if (!IsMouseOver && !search.IsKeyboardFocusWithin && !anchor.IsKeyboardFocused && !IsSurfaceVisible)
         {
-            search.Visibility = Visibility.Collapsed;
+            SetSearchExpanded(false);
         }
     }
 
@@ -382,7 +411,7 @@ public sealed class QuickViewControl : Grid
         else if (key == Key.Escape && !IsSurfaceVisible)
         {
             search.Clear();
-            search.Visibility = Visibility.Collapsed;
+            SetSearchExpanded(false);
             anchor.Focus();
             args.Handled = true;
         }
@@ -424,10 +453,9 @@ public sealed class QuickViewControl : Grid
 
     private void OnResizeDragDelta(object sender, DragDeltaEventArgs args)
     {
-        var maximumWidth = Math.Max(MinimumSurfaceWidth, ownerViewport.Width * MaximumViewportRatio);
-        var maximumHeight = Math.Max(MinimumSurfaceHeight, ownerViewport.Height * MaximumViewportRatio);
-        surface.Width = Math.Clamp(surface.ActualWidth + args.HorizontalChange, MinimumSurfaceWidth, maximumWidth);
-        surface.Height = Math.Clamp(surface.ActualHeight - args.VerticalChange, MinimumSurfaceHeight, maximumHeight);
+        var (minimumWidth, maximumWidth, minimumHeight, maximumHeight) = SurfaceSizeLimits();
+        surface.Width = Math.Clamp(surface.ActualWidth - args.HorizontalChange, minimumWidth, maximumWidth);
+        surface.Height = Math.Clamp(surface.ActualHeight - args.VerticalChange, minimumHeight, maximumHeight);
         widthRatio = surface.Width / ownerViewport.Width;
         heightRatio = surface.Height / ownerViewport.Height;
     }
@@ -441,14 +469,39 @@ public sealed class QuickViewControl : Grid
 
     private void UpdateSurfaceSize()
     {
+        var (minimumWidth, maximumWidth, minimumHeight, maximumHeight) = SurfaceSizeLimits();
         surface.Width = Math.Clamp(
             ownerViewport.Width * widthRatio,
-            Math.Min(MinimumSurfaceWidth, ownerViewport.Width),
-            Math.Max(Math.Min(MinimumSurfaceWidth, ownerViewport.Width), ownerViewport.Width * MaximumViewportRatio));
+            minimumWidth,
+            maximumWidth);
         surface.Height = Math.Clamp(
             ownerViewport.Height * heightRatio,
-            Math.Min(MinimumSurfaceHeight, ownerViewport.Height),
-            Math.Max(Math.Min(MinimumSurfaceHeight, ownerViewport.Height), ownerViewport.Height * MaximumViewportRatio));
+            minimumHeight,
+            maximumHeight);
+    }
+
+    private (double MinimumWidth, double MaximumWidth, double MinimumHeight, double MaximumHeight) SurfaceSizeLimits()
+    {
+        var availableWidth = Math.Max(1, ownerViewport.Width - (ViewportInset * 2));
+        var availableHeight = Math.Max(
+            1,
+            ownerViewport.Height - (ViewportInset * 2) - LauncherGap - LauncherButtonSize - 10);
+        var maximumWidth = Math.Min(availableWidth, Math.Max(MinimumSurfaceWidth, ownerViewport.Width * MaximumViewportRatio));
+        var maximumHeight = Math.Min(availableHeight, Math.Max(MinimumSurfaceHeight, ownerViewport.Height * MaximumViewportRatio));
+        return (
+            Math.Min(MinimumSurfaceWidth, maximumWidth),
+            maximumWidth,
+            Math.Min(MinimumSurfaceHeight, maximumHeight),
+            maximumHeight);
+    }
+
+    private void UpdateSearchWidth()
+    {
+        // Preserve the 44-DIP text target when possible, while allowing the
+        // popup to fit entirely inside compact or snapped browser windows.
+        var launcherChrome = LauncherButtonSize + launcher.Padding.Left + launcher.Padding.Right +
+            launcher.BorderThickness.Left + launcher.BorderThickness.Right;
+        search.Width = Math.Max(1, Math.Min(270, ownerViewport.Width - (ViewportInset * 2) - launcherChrome));
     }
 
     private Button CreateIconButton(OrbitIconKind iconKind, string name)
@@ -468,25 +521,25 @@ public sealed class QuickViewControl : Grid
         return button;
     }
 
-    private static FrameworkElement IconLabel(OrbitIconKind kind, string label)
+    private void UpdateLauncherVisual(bool emphasized)
     {
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
-        var icon = new OrbitIcon
+        if (SystemParameters.HighContrast)
         {
-            Kind = kind,
-            Width = 18,
-            Height = 18,
-            Margin = new Thickness(0, 0, 7, 0),
-        };
-        icon.BindStrokeToAncestorForeground();
-        row.Children.Add(icon);
-        row.Children.Add(new TextBlock
-        {
-            Text = label,
-            FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        return row;
+            launcher.Background = SystemColors.ControlBrush;
+            launcher.BorderBrush = SystemColors.ControlTextBrush;
+            return;
+        }
+
+        launcher.Background = new LinearGradientBrush(
+            emphasized
+                ? Color.FromArgb(250, 5, 16, 22)
+                : Color.FromArgb(186, 12, 29, 36),
+            emphasized
+                ? Color.FromArgb(250, 10, 28, 34)
+                : Color.FromArgb(186, 22, 48, 52),
+            new Point(0, 0),
+            new Point(1, 1));
+        launcher.BorderBrush = emphasized ? OrbitVisualTheme.SeaGlassStrong : OrbitVisualTheme.WaypointGold;
     }
 
     private Button TextButton(string label, Action action)

@@ -131,6 +131,51 @@ public sealed class BrowserWorkspaceCoordinatorTests
     }
 
     [Fact]
+    public async Task SettingsParticipatesInLiveTabsWithoutPersistingAnInternalOrigin()
+    {
+        using var temp = new TempDirectory();
+        var storage = new FileProfileStorage(temp.Path);
+        var context = Context(BrowserProfileMode.Normal);
+        var window = new BrowserWindowId(Guid.NewGuid());
+        var web = Tab("Web");
+        var sessions = new BrowserWorkspaceSessionStore(storage);
+        await using var coordinator = (await BrowserWorkspaceCoordinator.CreateAsync(
+            context,
+            window,
+            new BrowserState(window, web.TabId, [web]),
+            new TabGroupMetadataStore(storage),
+            sessions)).Value!;
+        var settings = Tab("Settings") with
+        {
+            InternalPage = BrowserInternalPageKind.Settings,
+        };
+
+        var added = await coordinator.ExecuteAsync(new AddWorkspaceTabAction(
+            window,
+            coordinator.Current.Revision,
+            settings,
+            Select: true));
+        var persisted = await sessions.LoadAsync(context);
+
+        Assert.True(added.IsSuccess);
+        Assert.Equal(BrowserInternalPageKind.Settings,
+            added.Value!.Snapshot.Browser.Tabs.Single(tab => tab.TabId == settings.TabId).InternalPage);
+        Assert.Equal(settings.TabId, added.Value.Snapshot.Browser.SelectedTabId);
+        var persistedSettings = persisted.Value!.Tabs.Single(tab => tab.TabId == settings.TabId);
+        Assert.Null(persistedSettings.Address);
+        Assert.Equal("New Tab", persistedSettings.Title);
+
+        var closed = await coordinator.ExecuteAsync(new CloseWorkspaceTabsAction(
+            window,
+            coordinator.Current.Revision,
+            [settings.TabId]));
+        Assert.True(closed.IsSuccess);
+        Assert.Equal([settings.TabId], closed.Value!.ClosedTabIds);
+        Assert.DoesNotContain(closed.Value.Snapshot.Browser.Tabs,
+            tab => tab.InternalPage == BrowserInternalPageKind.Settings);
+    }
+
+    [Fact]
     public async Task RestoredSessionIsAuthoritativeOverLegacyGroupMetadata()
     {
         using var temp = new TempDirectory();

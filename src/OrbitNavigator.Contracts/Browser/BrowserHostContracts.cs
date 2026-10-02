@@ -14,6 +14,16 @@ public enum BrowserLoadState
     Failed = 2,
 }
 
+/// <summary>
+/// Identifies browser-owned content that participates in the ordinary tab model
+/// without being loaded into a site WebView.
+/// </summary>
+public enum BrowserInternalPageKind
+{
+    None = 0,
+    Settings = 1,
+}
+
 public abstract record BrowserCommand(
     BrowserWindowId WindowId,
     BrowserTabId TabId);
@@ -76,7 +86,14 @@ public sealed record BrowserTabState(
     BrowserLoadState LoadState,
     bool CanGoBack,
     bool CanGoForward,
-    bool IsPrivate);
+    bool IsPrivate)
+{
+    /// <summary>
+    /// Browser-owned page displayed by this tab. Internal pages have no web
+    /// address and therefore do not receive a WebView or site identity.
+    /// </summary>
+    public BrowserInternalPageKind InternalPage { get; init; }
+}
 
 public sealed record BrowserState(
     BrowserWindowId WindowId,

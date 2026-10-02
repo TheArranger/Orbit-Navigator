@@ -419,14 +419,14 @@ public sealed record UpdateApplyDecision(
 
 public static class UpdateApplyPolicy
 {
-    public const string UnsignedBetaChannelDisclosureKey =
-        "warning.update.unsigned_beta_channel_windows";
+    public const string UnsignedInstallerDisclosureKey =
+        "warning.update.unsigned_installer_windows";
 
     public static UpdateApplyDecision Evaluate(
         UpdateReleaseChannel channel,
         UpdatePublisherTrust publisherTrust,
         UpdatePreference preference,
-        bool deliberateUnsignedBetaConfirmation)
+        bool deliberateUnsignedConfirmation)
     {
         if (!Enum.IsDefined(channel) ||
             !Enum.IsDefined(publisherTrust) ||
@@ -452,20 +452,13 @@ public static class UpdateApplyPolicy
 
         if (publisherTrust == UpdatePublisherTrust.Unsigned)
         {
-            if (channel == UpdateReleaseChannel.Primary)
-            {
-                return new UpdateApplyDecision(
-                    UpdateApplyDisposition.Blocked,
-                    "error.update.primary_requires_trusted_publisher");
-            }
-
-            return deliberateUnsignedBetaConfirmation
+            return deliberateUnsignedConfirmation
                 ? new UpdateApplyDecision(
                     UpdateApplyDisposition.UserApprovedOnly,
-                    "status.update.unsigned_beta_confirmed")
+                    "status.update.unsigned_installer_confirmed")
                 : new UpdateApplyDecision(
                     UpdateApplyDisposition.RequiresDeliberateConfirmation,
-                    UnsignedBetaChannelDisclosureKey);
+                    UnsignedInstallerDisclosureKey);
         }
 
         return preference == UpdatePreference.Automatic

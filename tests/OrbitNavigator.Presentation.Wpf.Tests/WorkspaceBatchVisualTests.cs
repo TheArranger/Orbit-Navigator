@@ -360,9 +360,11 @@ public sealed class WorkspaceBatchVisualTests
             Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.Background);
             var anchor = control.AnchorButton;
             Assert.Equal(Visibility.Visible, anchor.Visibility);
-            Assert.True(anchor.ActualWidth >= 154 && anchor.ActualHeight >= 48);
+            Assert.InRange(anchor.ActualWidth, 48, 64);
+            Assert.True(anchor.ActualHeight >= 48);
+            Assert.IsType<OrbitIcon>(anchor.Content);
             Assert.True(control.OverlayPopup.IsOpen);
-            Assert.NotNull(StaTest.FindByAutomationName<Border>(control.OverlayPopup, "Quick View lower-left launcher"));
+            Assert.NotNull(StaTest.FindByAutomationName<Border>(control.OverlayPopup, "Quick View lower-right launcher"));
             anchor.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
             Assert.IsType<OpenQuickViewAction>(Assert.Single(actions));

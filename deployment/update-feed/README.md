@@ -1,50 +1,38 @@
-# Orbit Navigator update feed (not deployed)
+# Orbit Navigator Primary update feed
 
-This is a static, download-only service boundary. It must never share a container,
+This is a static, download-only Docker service. It must never share a container,
 volume, listener, or tunnel route with My Orbit or another application.
 
-## Fixed local boundary
+## Fixed boundary
 
 - Compose service/container: `orbit-navigator-updates`
 - Container listener: `8080`
-- Only host publication: `127.0.0.1:8789:8080`
-- Public hostname reserved by the user: `orbit-nav-updater.snap-it.cc`
+- Host publication: `127.0.0.1:8789:8080` only
+- Public hostname: `orbit-nav-updater.snap-it.cc`
 - Cloudflare Tunnel origin: `http://127.0.0.1:8789`
+- Host artifact root: `C:\ProgramData\OrbitNavigator\UpdateFeed\Primary`
 
-The host port was observed unused on 2026-08-15. Recheck before deployment.
-
-## Artifact directory
-
-Create two dedicated directories containing only their own channel artifacts:
+The artifact root contains only:
 
 ```text
-primary/
-  manifest.json
-  OrbitNavigator-X.Y.Z.exe
-beta/
-  manifest.json
-  OrbitNavigator-X.Y.Z-beta.N.exe
+manifest.json
+OrbitNavigator-X.Y.Z.exe
 ```
 
-Use `C:\ProgramData\OrbitNavigator\UpdateFeed\Primary` and
-`C:\ProgramData\OrbitNavigator\UpdateFeed\Beta` as the host roots. Mount them with
-`ORBIT_PRIMARY_UPDATE_ROOT` and `ORBIT_BETA_UPDATE_ROOT`; Compose maps each to its
-own read-only channel root. Grant a dedicated release operator write access only
-while staging a release, and grant Docker read access. Do not locate either root
-under a Windows user profile, network share, source tree, Docker socket directory,
-or any directory containing secrets.
+Set `ORBIT_PRIMARY_UPDATE_ROOT` to that absolute directory before running Compose.
+The directory is mounted read-only. Do not place it in a user profile, repository,
+network share, Docker socket directory, or any location containing credentials.
 
-The nginx configuration is baked into an image whose upstream base is pinned by
-digest; this avoids exposing the `Z:` project share to Docker. Compose mounts only
-the dedicated artifact directory read-only, runs nginx as UID/GID 101 with all
-capabilities dropped, uses a read-only root filesystem, and places the service on
-an isolated internal Docker network.
-It exposes no upload, directory-listing, admin, proxy, CGI, or dynamic route.
+The nginx base image is pinned by digest. The container runs as UID/GID 101 with a
+read-only root filesystem, all capabilities dropped, no-new-privileges, bounded
+CPU/memory/PIDs, and no Docker socket or secrets. It exposes no upload, directory
+listing, admin, proxy, CGI, wildcard host, or dynamic route. Only the exact Primary
+manifest and versioned installer filename pattern are downloadable.
 
-## Cloudflare Tunnel ingress (guidance only)
+## Cloudflare Tunnel ingress
 
-Do not add this route until separately authorized. Add one exact hostname rule to
-the existing named tunnel, ahead of the final catch-all:
+The existing named tunnel must contain only this exact route ahead of its final
+catch-all:
 
 ```yaml
 ingress:
@@ -53,67 +41,34 @@ ingress:
   - service: http_status:404
 ```
 
-Do not add a wildcard hostname, LAN CIDR route, dashboard/admin route, or a fallback
-to another local service. The connector remains outbound-only. Public clients must
-use `https://orbit-nav-updater.snap-it.cc`; HTTP at the Cloudflare edge must redirect
-to HTTPS. Set minimum TLS 1.2 or newer. The loopback hop is confined to the machine
-and is carried outward only inside the authenticated tunnel.
+Never add a wildcard hostname, LAN CIDR route, dashboard/admin route, or fallback to
+another local service. The connector remains outbound-only. Public clients use only
+`https://orbit-nav-updater.snap-it.cc`; the edge requires TLS 1.2 or newer. Bypass
+caching for `/primary/manifest.json`; immutable caching is allowed only for versioned
+installer paths. Logs must omit query strings, referrers, user agents, manifest
+contents, and client identifiers.
 
-At the edge, bypass caching independently for `/primary/manifest.json` and
-`/beta/manifest.json`; immutable caching is allowed only for versioned installer
-paths. Never rewrite or fall back between the two channel prefixes. Apply a
-conservative per-IP rate limit. Do not
-log query strings, referrers, user agents, manifest contents, or client identifiers.
+## Client and release policy
 
-## Release gates
+Orbit uses one channel: Primary. There is no Beta selection or cross-channel fallback.
+The client automatically checks on a randomized, privacy-preserving local schedule and
+uses conditional ETag requests. Its random install seed never leaves the device.
+Offline checks fail quietly and local browsing remains available.
 
-The service is not sufficient by itself. Publication remains blocked until:
+Every manifest is signed with the pinned Orbit ECDSA P-256 release key. The client
+verifies the manifest signature, channel, expiry, monotonically increasing release
+sequence, version/no-downgrade rule, exact HTTPS origin, rollout eligibility, package
+size, and SHA-256 before staging an installer.
 
-1. Primary `Setup.exe`, the launcher, and application binaries are Authenticode-signed
-   by a consistent trusted publisher and RFC 3161 timestamped before Primary
-   automatic application is enabled. Unsigned Beta packages always require a clear
-   Windows trust warning and deliberate per-package confirmation.
-2. Each canonical manifest is signed offline with its channel's independent ECDSA
-   P-256 release key ring. Public keys are pinned per channel in Orbit Navigator.
-   Private keys must not be on this host, in the container, repository, CI variables,
-   or either artifact volume.
-3. The client verifies manifest signature, channel, expiry, monotonically increasing
-   release sequence, version/no-downgrade rule, exact HTTPS origin, size, SHA-256, and
-   Authenticode publisher before allowing apply/restart.
-4. Negative tests prove that LAN addresses, unrelated hostnames and paths, uploads,
-   listings, traversal, unexpected methods, unsigned/tampered packages, stale
-   manifests, and tunnel fallback routes fail closed.
+Until Orbit has a Windows-trusted Authenticode certificate, an unsigned installer may
+be offered only after all manifest and hash checks pass. It must never install silently:
+the user receives an explicit unknown-publisher disclosure and must deliberately
+confirm each package before Windows opens the visible installer. Once Authenticode is
+available, automatic application may be considered only for a correctly signed and
+timestamped package from the expected publisher.
 
-Primary is the default and Beta requires explicit `Allow Beta Updates` opt-in. The
-selection is exclusive: a client checks one exact manifest and never falls back to,
-promotes from, or compares release sequences with the other channel. Each channel
-has its own monotonic sequence and ETag cache.
+Rollback is forward-only: publish a newly signed higher version and release sequence
+that restores the last-known-good application. Never lower either value.
 
-Rollback is forward-only within the selected channel: publish a newly signed higher
-version that restores the last-known-good application. Never lower the version or
-release sequence.
-
-## Client rollout and channel behavior
-
-The client creates a cryptographically random 32-byte install seed on first run and
-stores it only in local update state. The seed is never sent to the feed. It is used
-with the signed channel and release sequence to select a deterministic rollout bucket
-and to jitter initial, regular, and exponential retry schedules. Requests contain no
-install identifier; an ordinary shared ETag may be sent with `If-None-Match`.
-
-Primary and Beta use independent manifest URLs, signing-key rings, ETag caches, and
-accepted-release sequence high-watermarks. Primary is selected by default. Settings
-may expose one explicit `Allow Beta Updates` choice; enabling it selects Beta only,
-and disabling it returns to Primary only. There is no cross-channel fallback.
-
-Manifest signature, expiry, rollout, exact-origin, size, hash, and sequence checks are
-mandatory for both channels. An unsigned Primary installer is blocked. An unsigned
-Beta installer ignores any automatic-update preference and requires a deliberate
-per-package confirmation after showing this meaning:
-
-> This Beta update is authenticated by Orbit's signed update manifest, but its
-> installer is not yet signed by a Windows-trusted publisher. Windows may show an
-> unknown-publisher warning. Continue only if you intentionally want this Beta build.
-
-Presentation owns final accessible wording, but it must preserve all of those facts
-and cannot relabel the package as Windows-trusted.
+Run `Test-Isolation.ps1` before deployment. Negative checks cover the retired Beta
+path, listings, traversal, unexpected methods, and wrong package shapes.

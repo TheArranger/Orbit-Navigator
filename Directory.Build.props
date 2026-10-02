@@ -6,8 +6,8 @@
     <Authors>Orbit Nav Pub</Authors>
     <Company>Orbit Nav Pub</Company>
     <Copyright>Copyright © 2026 Orbit Nav Pub</Copyright>
-    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

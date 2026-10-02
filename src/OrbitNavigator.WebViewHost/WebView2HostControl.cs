@@ -2,9 +2,11 @@ using System.IO;
 using System.Windows.Controls;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
+using OrbitNavigator.Contracts.Browser;
 using OrbitNavigator.Contracts.Common;
 using OrbitNavigator.Contracts.Infrastructure;
 using OrbitNavigator.Contracts.Privacy;
+using OrbitNavigator.Foundation.Browser;
 using OrbitNavigator.Foundation.Diagnostics;
 using OrbitNavigator.Foundation.Resources;
 using OrbitNavigator.WebViewHost.Navigation;
@@ -27,12 +29,16 @@ public sealed class WebView2HostControl : UserControl, IAsyncDisposable
     private readonly ILocalDiagnostics _diagnostics;
     private readonly IPermissionBroker? _permissionBroker;
     private readonly PermissionCompletionRegistry _permissionCompletions;
+    private readonly IDownloadTrackingSink? _downloadTracking;
+    private readonly IBrowserSettingsFacade? _browserSettings;
+    private readonly IDownloadDestinationPicker _downloadDestinationPicker;
     private IWebViewProfileLease? _profileLease;
     private CoreWebView2Environment? _environment;
     private Uri? _currentAddress;
     private string _documentTitle = string.Empty;
     private byte[] _faviconPng = [];
     private bool _isLoading;
+    private bool _containsFullscreenElement;
     private long _visualRevision;
     private long _audioRevision;
     private long _faviconRequestGeneration;
@@ -43,13 +49,19 @@ public sealed class WebView2HostControl : UserControl, IAsyncDisposable
         HostNavigationGuard? navigation = null,
         IPermissionBroker? permissionBroker = null,
         PermissionCompletionRegistry? permissionCompletions = null,
-        ILocalDiagnostics? diagnostics = null)
+        ILocalDiagnostics? diagnostics = null,
+        IDownloadTrackingSink? downloadTracking = null,
+        IBrowserSettingsFacade? browserSettings = null,
+        IDownloadDestinationPicker? downloadDestinationPicker = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _navigation = navigation ?? new HostNavigationGuard();
         _permissionBroker = permissionBroker;
         _permissionCompletions = permissionCompletions ?? new PermissionCompletionRegistry();
         _diagnostics = diagnostics ?? NullLocalDiagnostics.Instance;
+        _downloadTracking = downloadTracking;
+        _browserSettings = browserSettings;
+        _downloadDestinationPicker = downloadDestinationPicker ?? new WindowsDownloadDestinationPicker();
         Content = _webView;
     }
 
@@ -64,6 +76,31 @@ public sealed class WebView2HostControl : UserControl, IAsyncDisposable
     public event EventHandler<WebViewTabVisualStateChangedEventArgs>? TabVisualStateChanged;
 
     public event EventHandler<WebViewTabAudioStateChangedEventArgs>? TabAudioStateChanged;
+
+    public event EventHandler<WebViewNewTabRequestedEventArgs>? NewTabRequested;
+
+    public event EventHandler<WebViewNavigationCompletedEventArgs>? NavigationCompleted;
+
+    public bool ContainsFullscreenElement => _containsFullscreenElement;
+
+    public event EventHandler<WebViewFullscreenChangedEventArgs>? FullscreenChanged;
+
+    public async Task ExitFullscreenAsync()
+    {
+        PublishFullscreenState(false);
+        if (Volatile.Read(ref _disposed) != 0 || _webView.CoreWebView2 is not { } core) return;
+        try
+        {
+            // Exiting from the top document also exits fullscreen in its nested iframe.
+            await core.ExecuteScriptAsync(
+                "if (document.fullscreenElement) document.exitFullscreen().catch(() => {});");
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or
+            System.Runtime.InteropServices.COMException)
+        {
+            // Closing a tab or a crashed renderer must not leave the native shell fullscreen.
+        }
+    }
 
     public WebViewTabResourceIdentity CreateResourceIdentity(bool isSelected, bool isLoading) => new(
         _context.TabId,
@@ -192,6 +229,9 @@ public sealed class WebView2HostControl : UserControl, IAsyncDisposable
     public ValueTask<ControllerResult> ReloadAsync(CancellationToken cancellationToken = default) =>
         ExecuteNavigationActionAsync(core => { core.Reload(); return true; }, cancellationToken);
 
+    public ValueTask<ControllerResult> StopAsync(CancellationToken cancellationToken = default) =>
+        ExecuteNavigationActionAsync(core => { core.Stop(); return true; }, cancellationToken);
+
     public async ValueTask<ControllerResult> InitializeAsync(
         IWebViewProfileLease profileLease,
         CancellationToken cancellationToken = default)
@@ -235,6 +275,8 @@ public sealed class WebView2HostControl : UserControl, IAsyncDisposable
             return;
         }
 
+        PublishFullscreenState(false);
+
         if (_webView.CoreWebView2 is not null)
         {
             _webView.CoreWebView2.NavigationStarting -= OnNavigationStarting;
@@ -247,11 +289,17 @@ public sealed class WebView2HostControl : UserControl, IAsyncDisposable
             _webView.CoreWebView2.IsMutedChanged -= OnAudioStateChanged;
             _webView.CoreWebView2.PermissionRequested -= OnPermissionRequested;
             _webView.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
+            _webView.CoreWebView2.DownloadStarting -= OnDownloadStarting;
+            _webView.CoreWebView2.ContainsFullScreenElementChanged -= OnFullscreenChanged;
+            _webView.CoreWebView2.ProcessFailed -= OnProcessFailed;
         }
 
         Interlocked.Increment(ref _faviconRequestGeneration);
         TabVisualStateChanged = null;
         TabAudioStateChanged = null;
+        NewTabRequested = null;
+        NavigationCompleted = null;
+        FullscreenChanged = null;
         _faviconPng = [];
 
         Content = null;
@@ -307,10 +355,29 @@ public sealed class WebView2HostControl : UserControl, IAsyncDisposable
         core.IsMutedChanged += OnAudioStateChanged;
         core.PermissionRequested += OnPermissionRequested;
         core.NewWindowRequested += OnNewWindowRequested;
+        core.DownloadStarting += OnDownloadStarting;
+        core.ContainsFullScreenElementChanged += OnFullscreenChanged;
+        core.ProcessFailed += OnProcessFailed;
         UpdateFromCore(core);
         PublishTabVisualState(core);
         _ = RefreshFaviconAsync(core);
         PublishTabAudioState(core);
+    }
+
+    private void OnFullscreenChanged(object? sender, object args)
+    {
+        if (sender is CoreWebView2 core)
+            PublishFullscreenState(core.ContainsFullScreenElement);
+    }
+
+    private void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs args) =>
+        PublishFullscreenState(false);
+
+    private void PublishFullscreenState(bool isFullscreen)
+    {
+        if (_containsFullscreenElement == isFullscreen) return;
+        _containsFullscreenElement = isFullscreen;
+        FullscreenChanged?.Invoke(this, new(isFullscreen));
     }
 
     private void OnAudioStateChanged(object? sender, object args)
@@ -355,6 +422,7 @@ public sealed class WebView2HostControl : UserControl, IAsyncDisposable
             return;
         }
 
+        PublishFullscreenState(false);
         _isLoading = true;
         _documentTitle = string.Empty;
         _faviconPng = [];
@@ -385,6 +453,13 @@ public sealed class WebView2HostControl : UserControl, IAsyncDisposable
         UpdateFromCore(core);
         PublishTabVisualState(core);
         _ = RefreshFaviconAsync(core);
+        if (args.IsSuccess && _currentAddress is { } address)
+        {
+            NavigationCompleted?.Invoke(this, new(
+                _context.TabId,
+                new Uri(address.AbsoluteUri),
+                _documentTitle));
+        }
     }
 
     private void OnDocumentTitleChanged(object? sender, object args)
@@ -642,6 +717,16 @@ public sealed class WebView2HostControl : UserControl, IAsyncDisposable
     private void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs args)
     {
         args.Handled = true;
+        if (NewTabRequestResolver.TryResolve(
+                _navigation,
+                _context,
+                args.Uri,
+                args.IsUserInitiated,
+                out var target))
+        {
+            NewTabRequested?.Invoke(this, new(target!, args.IsUserInitiated));
+            return;
+        }
         _ = _diagnostics.WriteAsync(new LocalDiagnosticEvent(
             DateTimeOffset.UtcNow,
             LocalDiagnosticSeverity.Information,
@@ -657,6 +742,156 @@ public sealed class WebView2HostControl : UserControl, IAsyncDisposable
             LocalDiagnosticEvent diagnosticEvent,
             CancellationToken cancellationToken = default) =>
             ValueTask.CompletedTask;
+    }
+
+    private async void OnDownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs args)
+    {
+        if (_downloadTracking is null || Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
+        var source = Uri.TryCreate(args.DownloadOperation.Uri, UriKind.Absolute, out var operationUri) &&
+            operationUri.Scheme is "http" or "https"
+                ? operationUri
+                : _currentAddress;
+        if (source is null) return;
+
+        var deferral = args.GetDeferral();
+        try
+        {
+            var operation = args.DownloadOperation;
+            if (_browserSettings is not null)
+            {
+                var settings = await _browserSettings.GetAsync(_context.Privacy);
+                if (settings.IsSuccess && settings.Value!.Values.AskWhereToSaveDownloads)
+                {
+                    var destination = _downloadDestinationPicker.PickDestination(args.ResultFilePath);
+                    args.Handled = true;
+                    if (string.IsNullOrWhiteSpace(destination))
+                    {
+                        args.Cancel = true;
+                        return;
+                    }
+                    args.ResultFilePath = destination;
+                }
+            }
+            var runtime = new CoreDownloadRuntimeControl(
+                operation,
+                Dispatcher,
+                _downloadTracking,
+                _context.Privacy);
+            var begin = await _downloadTracking.BeginAsync(new(
+                _context.Privacy,
+                source,
+                args.ResultFilePath,
+                WebViewDownloadStateMapper.NormalizeTotalBytes(operation.TotalBytesToReceive)),
+                runtime);
+            if (begin.IsSuccess)
+            {
+                runtime.Attach(begin.Value!.DownloadId);
+            }
+        }
+        catch
+        {
+            // Download tracking must never turn a user-requested download into
+            // an implicit cancellation. The download continues without a row.
+        }
+        finally
+        {
+            deferral.Complete();
+        }
+    }
+
+    private sealed class CoreDownloadRuntimeControl(
+        CoreWebView2DownloadOperation operation,
+        System.Windows.Threading.Dispatcher dispatcher,
+        IDownloadTrackingSink tracking,
+        PrivacyContext context) : IDownloadRuntimeControl
+    {
+        private DownloadRecordId? _downloadId;
+        private int _attached;
+        private int _terminal;
+        private int _cancelRequested;
+
+        public void Attach(DownloadRecordId downloadId)
+        {
+            if (downloadId.IsEmpty || Interlocked.Exchange(ref _attached, 1) != 0)
+            {
+                return;
+            }
+            _downloadId = downloadId;
+            operation.BytesReceivedChanged += OnProgressChanged;
+            operation.StateChanged += OnProgressChanged;
+            PublishCurrent();
+        }
+
+        public async ValueTask<ControllerResult> CancelAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Volatile.Read(ref _terminal) != 0)
+            {
+                return ControllerResult.Failure(ControllerError.Create(
+                    ControllerErrorCode.NotFound,
+                    "error.downloads.active_not_found"));
+            }
+            try
+            {
+                await dispatcher.InvokeAsync(() =>
+                {
+                    Interlocked.Exchange(ref _cancelRequested, 1);
+                    operation.Cancel();
+                }).Task.WaitAsync(cancellationToken);
+                return ControllerResult.Success();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                return ControllerResult.Failure(ControllerError.Create(
+                    ControllerErrorCode.Unavailable,
+                    "error.downloads.cancel_failed"));
+            }
+        }
+
+        private void OnProgressChanged(object? sender, object args) => PublishCurrent();
+
+        private async void PublishCurrent()
+        {
+            if (_downloadId is not { } id || Volatile.Read(ref _terminal) != 0)
+            {
+                return;
+            }
+
+            var state = WebViewDownloadStateMapper.Map(
+                operation.State,
+                Volatile.Read(ref _cancelRequested) != 0);
+            if (state != DownloadLifecycleState.InProgress)
+            {
+                Interlocked.Exchange(ref _terminal, 1);
+            }
+
+            try
+            {
+                await tracking.UpdateAsync(
+                    context,
+                    id,
+                    Math.Max(0, operation.BytesReceived),
+                    WebViewDownloadStateMapper.NormalizeTotalBytes(operation.TotalBytesToReceive),
+                    state);
+            }
+            finally
+            {
+                if (state != DownloadLifecycleState.InProgress)
+                {
+                    operation.BytesReceivedChanged -= OnProgressChanged;
+                    operation.StateChanged -= OnProgressChanged;
+                }
+            }
+        }
     }
 
     private ValueTask<ControllerResult> ExecuteNavigationActionAsync(

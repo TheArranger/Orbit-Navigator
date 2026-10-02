@@ -1,8 +1,8 @@
 # Third-party notices
 
-Orbit Navigator is licensed under MPL-2.0, but it depends on and may distribute
-components under their own licenses. Those licenses govern the corresponding
-third-party components.
+Orbit Navigator's first-party code is MIT-licensed, but it depends on and may
+distribute components under their own licenses. Those licenses govern the
+corresponding third-party components and are not replaced by Orbit's license.
 
 ## Runtime and distributed components
 

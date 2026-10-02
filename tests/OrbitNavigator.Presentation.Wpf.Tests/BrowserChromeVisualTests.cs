@@ -12,6 +12,7 @@ using OrbitNavigator.Contracts.Browser;
 using OrbitNavigator.Contracts.Common;
 using OrbitNavigator.Contracts.Privacy;
 using OrbitNavigator.Presentation.Permissions;
+using OrbitNavigator.Presentation.QuickView;
 using OrbitNavigator.Presentation.Shell;
 using OrbitNavigator.Presentation.Tabs;
 using OrbitNavigator.Presentation.Workspace;
@@ -145,6 +146,254 @@ public sealed class BrowserChromeVisualTests
 
             Assert.Equal(Visibility.Collapsed, chrome.SideTabPanelResizeHandle.Visibility);
         });
+    }
+
+    [Theory]
+    [InlineData(TabStripPlacement.Top, false)]
+    [InlineData(TabStripPlacement.Top, true)]
+    [InlineData(TabStripPlacement.Left, false)]
+    [InlineData(TabStripPlacement.Left, true)]
+    [InlineData(TabStripPlacement.Right, false)]
+    [InlineData(TabStripPlacement.Right, true)]
+    public void FullscreenFillsViewportWithoutReparentingAndRestoresLayout(
+        TabStripPlacement placement,
+        bool compact)
+    {
+        StaTest.Run(() =>
+        {
+            var context = Browsing();
+            var preferences = BrowserWorkspacePreferences.Default with
+            {
+                TabStripPlacement = placement,
+                SideTabPanelWidth = 312,
+                CollapseToActive = true,
+            };
+            var webContent = new Border();
+            var chrome = new BrowserChromeControl { WebContent = webContent };
+            chrome.ApplyWorkspacePreferences(preferences);
+            chrome.ApplyCompactTabMode(compact);
+            chrome.BindTabControllerSession(ControllerSession(context, placement, TabControllerHostState.Docked, 1));
+            var changes = 0;
+            chrome.WorkspacePreferencesChanged += (_, _) => changes++;
+            StaTest.Prepare(chrome);
+            var contentParent = VisualTreeHelper.GetParent(webContent);
+            var contentBounds = webContent.TransformToAncestor(chrome).TransformBounds(new Rect(new Point(), webContent.RenderSize));
+            var rows = chrome.RowDefinitions.Select(row => row.Height).ToArray();
+            var columns = chrome.ColumnDefinitions.Select(column => (column.Width, column.MinWidth, column.MaxWidth)).ToArray();
+            var childHosts = chrome.Children.Cast<UIElement>().ToArray();
+
+            chrome.ApplyFullscreen(true);
+            chrome.ApplyFullscreen(true);
+            StaTest.Prepare(chrome);
+
+            AssertFullscreenContent(chrome, webContent, contentParent);
+            // Chrome's windowed minimum height must not reserve hidden space.
+            StaTest.Prepare(chrome, 400, 80);
+            Assert.Equal(80, webContent.ActualHeight);
+
+            chrome.ApplyFullscreen(false);
+            chrome.ApplyFullscreen(false);
+            StaTest.Prepare(chrome);
+
+            Assert.False(chrome.IsFullscreen);
+            Assert.True(chrome.IsDockedTabControllerVisible);
+            Assert.Equal(preferences, chrome.WorkspacePreferences);
+            Assert.Equal(compact, chrome.IsCompactTabMode);
+            Assert.Equal(compact, StaTest.FindByAutomationName<TabControllerControl>(
+                chrome, "Browser tab controller").IsCompactMode);
+            Assert.Equal(0, changes);
+            Assert.Same(webContent, chrome.WebContent);
+            Assert.Same(contentParent, VisualTreeHelper.GetParent(webContent));
+            Assert.Equal(childHosts, chrome.Children.Cast<UIElement>());
+            Assert.Equal(contentBounds, webContent.TransformToAncestor(chrome).TransformBounds(new Rect(new Point(), webContent.RenderSize)));
+            Assert.Equal(rows, chrome.RowDefinitions.Select(row => row.Height));
+            Assert.Equal(columns, chrome.ColumnDefinitions.Select(column => (column.Width, column.MinWidth, column.MaxWidth)));
+            Assert.Equal(104, chrome.MinHeight);
+            Assert.Equal(placement == TabStripPlacement.Top ? Visibility.Collapsed : Visibility.Visible,
+                chrome.SideTabPanelResizeHandle.Visibility);
+        });
+    }
+
+    [Fact]
+    public void FullscreenSurvivesNewPreferencesAndControllerProjectionsAndRestoresLatestState()
+    {
+        StaTest.Run(() =>
+        {
+            var context = Browsing();
+            var session = ControllerSession(context, TabStripPlacement.Left, TabControllerHostState.Docked, 1);
+            var webContent = new Border();
+            var chrome = new BrowserChromeControl { WebContent = webContent };
+            chrome.ApplyWorkspacePreferences(BrowserWorkspacePreferences.Default with { TabStripPlacement = TabStripPlacement.Left });
+            chrome.BindTabControllerSession(session);
+            StaTest.Prepare(chrome);
+            var contentParent = VisualTreeHelper.GetParent(webContent);
+            var changes = 0;
+            chrome.WorkspacePreferencesChanged += (_, _) => changes++;
+            chrome.ApplyFullscreen(true);
+
+            var latestPreferences = BrowserWorkspacePreferences.Default with
+            {
+                TabStripPlacement = TabStripPlacement.Right,
+                SideTabPanelWidth = 336,
+                CollapseToActive = true,
+            };
+            chrome.ApplyWorkspacePreferences(latestPreferences);
+            chrome.ApplyCompactTabMode(true);
+            chrome.RenderTabs(new(context.WindowId, context.TabId, [Tab(context.TabId, "Updated page", false)]),
+                new Dictionary<BrowserTabGroupId, TabGroupPresentation>());
+            foreach (var (hostState, revision) in new[]
+            {
+                (TabControllerHostState.Detached, 2),
+                (TabControllerHostState.Docked, 3),
+                (TabControllerHostState.Detached, 4),
+            })
+            {
+                session.AcceptProjection(ControllerProjection(context, TabStripPlacement.Right, hostState, revision));
+                StaTest.Prepare(chrome);
+                AssertFullscreenContent(chrome, webContent, contentParent);
+                Assert.False(chrome.IsShowTabsRecoveryVisible);
+            }
+            chrome.SideTabPanelResizeHandle.RaiseEvent(new DragCompletedEventArgs(0, 0, false)
+            {
+                RoutedEvent = Thumb.DragCompletedEvent,
+            });
+
+            chrome.ApplyFullscreen(false);
+            StaTest.Prepare(chrome);
+
+            Assert.Equal(0, changes);
+            Assert.Equal(latestPreferences, chrome.WorkspacePreferences);
+            Assert.True(chrome.IsCompactTabMode);
+            Assert.False(chrome.IsDockedTabControllerVisible);
+            Assert.True(chrome.IsShowTabsRecoveryVisible);
+            Assert.Equal(0, chrome.ColumnDefinitions[1].Width.Value);
+            session.AcceptProjection(ControllerProjection(context, TabStripPlacement.Right, TabControllerHostState.Docked, 5));
+            StaTest.Prepare(chrome);
+            Assert.True(chrome.IsDockedTabControllerVisible);
+            Assert.Equal(336, chrome.ColumnDefinitions[1].Width.Value);
+            Assert.Equal(Visibility.Visible, chrome.SideTabPanelResizeHandle.Visibility);
+            Assert.Same(contentParent, VisualTreeHelper.GetParent(webContent));
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FullscreenSuppressesNativeQuickViewPopupAcrossLoadingAndUpdates(bool enterBeforeLoaded)
+    {
+        StaTest.Run(() =>
+        {
+            var chrome = new BrowserChromeControl();
+            var quickView = new QuickViewPresentation(1, false, true, QuickViewHostState.Ready,
+                "Search", new Uri("https://example.test/"), QuickViewStateTransferCapability.AddressReloadOnly,
+                "Quick View is ready.", []);
+            chrome.ApplyQuickView(quickView);
+            if (enterBeforeLoaded) chrome.ApplyFullscreen(true);
+            var window = new Window { Content = chrome, Width = 1100, Height = 700, ShowInTaskbar = false };
+            window.Show();
+            try
+            {
+                window.UpdateLayout();
+                Assert.Equal(!enterBeforeLoaded, chrome.QuickView.OverlayPopup.IsOpen);
+                chrome.ApplyFullscreen(true);
+                Assert.False(chrome.QuickView.OverlayPopup.IsOpen);
+                chrome.ApplyQuickView(quickView with { Revision = 2, HostState = QuickViewHostState.Open });
+                window.UpdateLayout();
+                Assert.Equal(Visibility.Collapsed, chrome.QuickView.Visibility);
+                Assert.False(chrome.QuickView.OverlayPopup.IsOpen);
+
+                chrome.ApplyFullscreen(false);
+                window.UpdateLayout();
+                Assert.Equal(Visibility.Visible, chrome.QuickView.Visibility);
+                Assert.True(chrome.QuickView.OverlayPopup.IsOpen);
+                Assert.Equal(2, chrome.QuickView.Presentation.Revision);
+                Assert.True(chrome.QuickView.IsSurfaceVisible);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FullscreenRequestsOwnerExitForNewOrExistingPermissionPrompt(bool promptAlreadyOpen)
+    {
+        StaTest.Run(() =>
+        {
+            var broker = new FakePermissionBroker();
+            using var presenter = new PermissionPromptPresenter(broker);
+            var context = Browsing();
+            if (promptAlreadyOpen) broker.Raise(PermissionPrompt(context));
+            var chrome = PermissionChrome(context, presenter);
+            var exits = 0;
+            chrome.FullscreenExitRequested += (_, _) =>
+            {
+                exits++;
+                chrome.ApplyFullscreen(false);
+            };
+            chrome.ApplyFullscreen(true);
+            if (!promptAlreadyOpen)
+            {
+                broker.Raise(PermissionPrompt(context));
+                PumpDispatcherUntil(() => exits == 1, TimeSpan.FromSeconds(5));
+            }
+            StaTest.Prepare(chrome);
+
+            Assert.Equal(1, exits);
+            Assert.False(chrome.IsFullscreen);
+            Assert.True(chrome.IsPermissionPromptVisible);
+            Assert.True(StaTest.FindByAutomationName<Button>(chrome, "Keep blocked").IsEnabled);
+        });
+    }
+
+    [Fact]
+    public void FullscreenEscapeRequestsOwnerExit()
+    {
+        StaTest.Run(() =>
+        {
+            var chrome = new BrowserChromeControl();
+            var exits = 0;
+            chrome.FullscreenExitRequested += (_, _) => exits++;
+            var window = new Window { Content = chrome, Width = 900, Height = 700, ShowInTaskbar = false };
+            window.Show();
+            try
+            {
+                chrome.ApplyFullscreen(true);
+                var args = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(chrome)!,
+                    Environment.TickCount, Key.Escape)
+                {
+                    RoutedEvent = Keyboard.PreviewKeyDownEvent,
+                };
+                chrome.RaiseEvent(args);
+                Assert.True(args.Handled);
+                Assert.Equal(1, exits);
+                // Presentation requests an exit; the owner remains responsible
+                // for changing native and content fullscreen together.
+                Assert.True(chrome.IsFullscreen);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    private static void AssertFullscreenContent(BrowserChromeControl chrome, Border webContent, DependencyObject contentParent)
+    {
+        Assert.True(chrome.IsFullscreen);
+        Assert.False(chrome.IsDockedTabControllerVisible);
+        Assert.Equal(Visibility.Collapsed, chrome.SideTabPanelResizeHandle.Visibility);
+        Assert.Equal(Visibility.Collapsed, chrome.QuickView.Visibility);
+        Assert.All(chrome.Children.OfType<Border>().Where(border => border.Child is DockPanel or TabControllerControl),
+            border => Assert.Equal(Visibility.Collapsed, border.Visibility));
+        Assert.Same(webContent, chrome.WebContent);
+        Assert.Same(contentParent, VisualTreeHelper.GetParent(webContent));
+        Assert.Equal(new Point(), webContent.TranslatePoint(new Point(), chrome));
+        Assert.Equal(chrome.ActualWidth, webContent.ActualWidth);
+        Assert.Equal(chrome.ActualHeight, webContent.ActualHeight);
     }
 
     [Fact]
@@ -419,6 +668,35 @@ public sealed class BrowserChromeVisualTests
             Assert.True(chrome.WorkspacePreferences.CollapseToActive);
             Assert.NotNull(StaTest.FindByAutomationName<Button>(chrome, "Reference, compact"));
             Assert.NotNull(StaTest.FindByAutomationName<Button>(chrome, "Selected"));
+            Assert.Equal(2, changes.Count);
+        });
+    }
+
+    [Fact]
+    public void InactiveTabDensityControlHasAnExplicitLabelAndEmitsBothPreferenceStates()
+    {
+        StaTest.Run(() =>
+        {
+            var chrome = new BrowserChromeControl();
+            var changes = new List<BrowserWorkspacePreferences>();
+            chrome.WorkspacePreferencesChanged += (_, args) => changes.Add(args.Preferences);
+            StaTest.Prepare(chrome);
+
+            var condense = StaTest.FindByAutomationName<Button>(chrome, "Condense inactive tabs");
+            Assert.True(condense.IsEnabled);
+            Assert.Contains("save space", condense.ToolTip?.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(StaTest.Descendants(condense).OfType<TextBlock>(), text =>
+                text.Text == "Condense inactive tabs");
+
+            condense.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+            Assert.True(Assert.Single(changes).CollapseToActive);
+            var expand = StaTest.FindByAutomationName<Button>(chrome, "Expand inactive tabs");
+            Assert.Equal("On", AutomationProperties.GetItemStatus(expand));
+            Assert.Contains("Restore full titles", expand.ToolTip?.ToString(), StringComparison.OrdinalIgnoreCase);
+            expand.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+            Assert.False(changes.Last().CollapseToActive);
             Assert.Equal(2, changes.Count);
         });
     }
@@ -724,6 +1002,47 @@ public sealed class BrowserChromeVisualTests
         });
     }
 
+    [Fact]
+    public void BrowserMenuCanHideAndRecallAddressBarThroughPersistedPreferences()
+    {
+        StaTest.Run(() =>
+        {
+            var chrome = new BrowserChromeControl();
+            var changes = new List<BrowserWorkspacePreferences>();
+            chrome.WorkspacePreferencesChanged += (_, args) =>
+            {
+                changes.Add(args.Preferences);
+                chrome.ApplyWorkspacePreferences(args.Preferences);
+            };
+            StaTest.Prepare(chrome);
+
+            var menuButton = StaTest.FindByAutomationName<Button>(chrome, "Open browser menu");
+            menuButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var menu = Assert.IsType<ContextMenu>(menuButton.ContextMenu);
+            var toggle = menu.Items.OfType<MenuItem>().Single(item =>
+                AutomationProperties.GetName(item) == "Show address bar");
+            Assert.True(toggle.IsCheckable);
+            Assert.True(toggle.IsChecked);
+            Assert.True(chrome.IsAddressBarVisible);
+
+            toggle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+
+            Assert.False(Assert.Single(changes).ShowAddressBar);
+            Assert.False(chrome.IsAddressBarVisible);
+
+            menuButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            menu = Assert.IsType<ContextMenu>(menuButton.ContextMenu);
+            toggle = menu.Items.OfType<MenuItem>().Single(item =>
+                AutomationProperties.GetName(item) == "Show address bar");
+            Assert.False(toggle.IsChecked);
+            toggle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+
+            Assert.True(changes.Last().ShowAddressBar);
+            Assert.True(chrome.IsAddressBarVisible);
+            menu.IsOpen = false;
+        });
+    }
+
     [Theory]
     [InlineData(TabStripPlacement.Top)]
     [InlineData(TabStripPlacement.Left)]
@@ -848,11 +1167,11 @@ public sealed class BrowserChromeVisualTests
                 Assert.Equal(requestCountAfterUnload, requests.Count);
                 chrome.ApplyResourceMonitorVisibility(false);
             }
-            finally
-            {
-                window.Close();
-            }
-        });
+        finally
+        {
+            window.Close();
+        }
+    });
     }
 
     [Fact]

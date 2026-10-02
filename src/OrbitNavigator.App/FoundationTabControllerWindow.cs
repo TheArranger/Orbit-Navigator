@@ -50,6 +50,24 @@ public sealed class FoundationTabControllerWindow : Window
 
     public bool FocusSelectedTab() => _tabs.FocusSelectedTab();
 
+    public void ShowOrActivate(bool focusSelected)
+    {
+        if (!IsVisible)
+        {
+            Show();
+        }
+        if (WindowState == WindowState.Minimized)
+        {
+            WindowState = WindowState.Normal;
+        }
+
+        Activate();
+        if (focusSelected)
+        {
+            FocusSelectedTab();
+        }
+    }
+
     public void CloseForOwner()
     {
         _closeForOwner = true;

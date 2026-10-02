@@ -56,7 +56,8 @@ public sealed record WorkspaceUiPreferencesSnapshot(
     WorkspacePreviewMode PreviewMode = WorkspacePreviewMode.Hover,
     WorkspaceAffiliatedRailPlacement AffiliatedRailPlacement = WorkspaceAffiliatedRailPlacement.Left,
     bool ShowAffiliatedRail = true,
-    double SideTabPanelWidth = WorkspaceUiPreferenceLimits.DefaultSideTabPanelWidth);
+    double SideTabPanelWidth = WorkspaceUiPreferenceLimits.DefaultSideTabPanelWidth,
+    bool ShowAddressBar = true);
 
 public sealed record SaveWorkspaceUiPreferencesIntent(
     PrivacyContext Context,
@@ -69,7 +70,8 @@ public sealed record SaveWorkspaceUiPreferencesIntent(
     WorkspacePreviewMode PreviewMode = WorkspacePreviewMode.Hover,
     WorkspaceAffiliatedRailPlacement AffiliatedRailPlacement = WorkspaceAffiliatedRailPlacement.Left,
     bool ShowAffiliatedRail = true,
-    double SideTabPanelWidth = WorkspaceUiPreferenceLimits.DefaultSideTabPanelWidth);
+    double SideTabPanelWidth = WorkspaceUiPreferenceLimits.DefaultSideTabPanelWidth,
+    bool ShowAddressBar = true);
 
 public interface IWorkspaceUiPreferencesStore
 {
@@ -135,7 +137,8 @@ public sealed class WorkspaceUiPreferencesStore : IWorkspaceUiPreferencesStore
                 stored.PreviewMode,
                 stored.AffiliatedRailPlacement,
                 stored.ShowAffiliatedRail,
-                stored.SideTabPanelWidth));
+                stored.SideTabPanelWidth,
+                stored.ShowAddressBar));
         }
         catch (JsonException)
         {
@@ -181,7 +184,8 @@ public sealed class WorkspaceUiPreferencesStore : IWorkspaceUiPreferencesStore
                 intent.PreviewMode,
                 intent.AffiliatedRailPlacement,
                 intent.ShowAffiliatedRail,
-                intent.SideTabPanelWidth));
+                intent.SideTabPanelWidth,
+                intent.ShowAddressBar));
             var writeRequest = ProfileStorageWriteRequest.Create(
                 address,
                 payload,
@@ -203,7 +207,8 @@ public sealed class WorkspaceUiPreferencesStore : IWorkspaceUiPreferencesStore
                 intent.PreviewMode,
                 intent.AffiliatedRailPlacement,
                 intent.ShowAffiliatedRail,
-                intent.SideTabPanelWidth));
+                intent.SideTabPanelWidth,
+                intent.ShowAddressBar));
         }
         finally
         {
@@ -255,7 +260,7 @@ public sealed class WorkspaceUiPreferencesStore : IWorkspaceUiPreferencesStore
         new(profileId, default, TabStripPlacement.Top, false, true, false,
             WorkspaceNewTabMode.Stellar, WorkspacePreviewMode.Hover,
             WorkspaceAffiliatedRailPlacement.Left, true,
-            WorkspaceUiPreferenceLimits.DefaultSideTabPanelWidth);
+            WorkspaceUiPreferenceLimits.DefaultSideTabPanelWidth, true);
 
     private static ControllerResult<WorkspaceUiPreferencesSnapshot> Invalid() =>
         ControllerResult<WorkspaceUiPreferencesSnapshot>.Failure(ControllerError.Create(
@@ -286,7 +291,8 @@ public sealed class WorkspaceUiPreferencesStore : IWorkspaceUiPreferencesStore
         WorkspacePreviewMode PreviewMode = WorkspacePreviewMode.Hover,
         WorkspaceAffiliatedRailPlacement AffiliatedRailPlacement = WorkspaceAffiliatedRailPlacement.Left,
         bool ShowAffiliatedRail = true,
-        double SideTabPanelWidth = WorkspaceUiPreferenceLimits.DefaultSideTabPanelWidth);
+        double SideTabPanelWidth = WorkspaceUiPreferenceLimits.DefaultSideTabPanelWidth,
+        bool ShowAddressBar = true);
 
     private sealed record ExpectedRevisionValidation(ProfileStorageRevision? Revision);
 }

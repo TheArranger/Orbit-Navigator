@@ -142,37 +142,24 @@ public sealed class UpdateClientPolicyTests
     }
 
     [Fact]
-    public void UnsignedPrimaryIsAlwaysBlocked()
+    public void UnsignedPrimaryRequiresDeliberateConfirmationAndNeverSilentlyAutoApplies()
     {
-        var decision = UpdateApplyPolicy.Evaluate(
+        var beforeConfirmation = UpdateApplyPolicy.Evaluate(
             UpdateReleaseChannel.Primary,
             UpdatePublisherTrust.Unsigned,
             UpdatePreference.Automatic,
-            deliberateUnsignedBetaConfirmation: true);
-
-        Assert.Equal(UpdateApplyDisposition.Blocked, decision.Disposition);
-        Assert.Equal("error.update.primary_requires_trusted_publisher", decision.MessageKey);
-    }
-
-    [Fact]
-    public void UnsignedBetaCanNeverSilentlyAutoApply()
-    {
-        var beforeConfirmation = UpdateApplyPolicy.Evaluate(
-            UpdateReleaseChannel.Beta,
-            UpdatePublisherTrust.Unsigned,
-            UpdatePreference.Automatic,
-            deliberateUnsignedBetaConfirmation: false);
+            deliberateUnsignedConfirmation: false);
         var afterConfirmation = UpdateApplyPolicy.Evaluate(
-            UpdateReleaseChannel.Beta,
+            UpdateReleaseChannel.Primary,
             UpdatePublisherTrust.Unsigned,
             UpdatePreference.Automatic,
-            deliberateUnsignedBetaConfirmation: true);
+            deliberateUnsignedConfirmation: true);
 
         Assert.Equal(
             UpdateApplyDisposition.RequiresDeliberateConfirmation,
             beforeConfirmation.Disposition);
         Assert.Equal(
-            UpdateApplyPolicy.UnsignedBetaChannelDisclosureKey,
+            UpdateApplyPolicy.UnsignedInstallerDisclosureKey,
             beforeConfirmation.MessageKey);
         Assert.Equal(UpdateApplyDisposition.UserApprovedOnly, afterConfirmation.Disposition);
     }
@@ -184,7 +171,7 @@ public sealed class UpdateClientPolicyTests
             UpdateReleaseChannel.Primary,
             UpdatePublisherTrust.TrustedPublisher,
             UpdatePreference.Automatic,
-            deliberateUnsignedBetaConfirmation: false);
+            deliberateUnsignedConfirmation: false);
 
         Assert.Equal(UpdateApplyDisposition.AutomaticAllowed, decision.Disposition);
     }

@@ -2,7 +2,7 @@ using OrbitNavigator.Updates;
 
 namespace OrbitNavigator.App.Updates;
 
-internal static class BetaUpdateTrust
+internal static class PrimaryUpdateTrust
 {
     internal static readonly UpdateManifestPublicKey ManifestKey = new(
         "beta-2026-01",

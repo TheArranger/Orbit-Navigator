@@ -8,18 +8,34 @@ Orbit Navigator is published by **Orbit Nav Pub** and maintained by **Paradox
 (aka TheArranger or TheCodeArranger)**. Individual contributors, if any join
 later, will be identified through the public repository history.
 
-Orbit Navigator is open-source software licensed under the Mozilla Public
-License 2.0. The license covers the original source, scripts, documentation,
-and project-created artwork in this repository unless a file is identified as
-third-party material. The license does not grant permission to present a fork
-as the official Orbit Navigator product or to use the Orbit Navigator name or
-logo as its identity. See [LICENSE](LICENSE), [NOTICE](NOTICE),
+Orbit Navigator is open-source software under the standard **MIT License**.
+You may use, modify, redistribute, and sell copies, including for commercial
+use, while retaining the license and copyright notice. First-party artwork
+is covered to the extent Orbit Nav Pub holds rights in it. Third-party
+material keeps its own license. See [LICENSE](LICENSE), [NOTICE](NOTICE),
 [TRADEMARKS.md](TRADEMARKS.md), and
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 Project stewardship is documented in [GOVERNANCE.md](GOVERNANCE.md).
 
+Released MIT versions remain available under MIT even if the project owner
+chooses a different license for future versions. Donations are optional and
+do not change anyone's license rights.
+
 Project links: [Paradox portfolio](https://iamtheparadox.com/) and
 [support Orbit Navigator on Ko-fi](https://ko-fi.com/paradoxthecreator).
+
+## Download and update
+
+[Download Orbit Navigator 0.1.25 for Windows x64](https://orbit-nav-updater.snap-it.cc/primary/OrbitNavigator-0.1.25.exe).
+The installer includes the offline WebView2 prerequisite. Install over an
+existing copy to retain the local browser profile. Close Orbit before updating.
+
+The browser uses one Primary update feed, with signed manifest, version, and
+package-hash checks. Download and installation remain user-controlled. This
+release is **not Authenticode-signed**: Windows may show an unknown-publisher or
+reputation warning. An update-manifest signature is not Windows publisher trust.
+See the [Code signing policy](CODE_SIGNING_POLICY.md). No paid signing service
+or subscription has been enabled.
 
 Phase 1 contains the foundation-owned launcher, WPF/WebView2 App composition,
 build/toolchain scaffold, frozen Contracts v1.1 project, browser facades,
@@ -30,6 +46,15 @@ cross-platform tab and history synchronization remains fail-closed until its
 encrypted transport, device/key lifecycle, and client adapters are complete.
 
 ## Build entry points
+
+Website fullscreen controls (including embedded remote-desktop players) expand
+the active tab to the display and temporarily hide browser chrome. Escape or
+the website's exit control restores the prior window and workspace layout.
+Tab changes, navigation, and renderer failures also leave fullscreen.
+
+The isolated WebView2 fullscreen smoke is opt-in: set
+`ORBIT_RUN_WEBVIEW_FULLSCREEN_SMOKE=1` when running the App tests. It uses a
+disposable private profile and an in-memory iframe fixture, never a real stream.
 
 - `scripts\Bootstrap-Toolchain.ps1` stages the pinned workspace-local .NET SDK.
 - `scripts\Build.ps1` builds the solution.

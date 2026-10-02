@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using OrbitNavigator.ClipboardShelf.Presentation;
 using OrbitNavigator.App.Accounts;
@@ -6,6 +7,7 @@ using OrbitNavigator.Contracts.Browser;
 using OrbitNavigator.Contracts.Common;
 using OrbitNavigator.Contracts.Privacy;
 using OrbitNavigator.Contracts.Updates;
+using OrbitNavigator.Foundation.Browser;
 using OrbitNavigator.Presentation.Wpf;
 using OrbitNavigator.Updates;
 
@@ -19,32 +21,41 @@ public sealed class FoundationUtilityWindow : Window
 {
     private readonly PrivacyContext _context;
     private readonly IHistoryFacade _history;
+    private readonly IDownloadsFacade _downloads;
     private readonly IBrowserSettingsFacade _settings;
     private readonly ClipboardShelfPresenter _clipboard;
     private readonly MyOrbitAccountSettingsAdapter _myOrbitAccountSettings;
-    private readonly BetaUpdateClient _betaUpdates;
+    private readonly PrimaryUpdateClient _updates;
     private readonly Func<BrowsingContext?> _accountContext;
     private readonly Func<Uri, Task> _openTarget;
     private readonly ListBox _items = new() { MinHeight = 280 };
     private readonly StackPanel _actions = new() { Orientation = Orientation.Horizontal };
     private BrowserSettingsSnapshot? _settingsSnapshot;
+    private readonly TextBlock _downloadStatus = new()
+    {
+        Margin = new Thickness(0, 8, 0, 0),
+        TextWrapping = TextWrapping.Wrap,
+    };
+    private bool _downloadsSubscribed;
 
     public FoundationUtilityWindow(
         PrivacyContext context,
         IHistoryFacade history,
+        IDownloadsFacade downloads,
         IBrowserSettingsFacade settings,
         ClipboardShelfPresenter clipboard,
         MyOrbitAccountSettingsAdapter myOrbitAccountSettings,
-        BetaUpdateClient betaUpdates,
+        PrimaryUpdateClient updates,
         Func<BrowsingContext?> accountContext,
         Func<Uri, Task> openTarget)
     {
         _context = context;
         _history = history;
+        _downloads = downloads ?? throw new ArgumentNullException(nameof(downloads));
         _settings = settings;
         _clipboard = clipboard;
         _myOrbitAccountSettings = myOrbitAccountSettings;
-        _betaUpdates = betaUpdates ?? throw new ArgumentNullException(nameof(betaUpdates));
+        _updates = updates ?? throw new ArgumentNullException(nameof(updates));
         _accountContext = accountContext;
         _openTarget = openTarget;
         Width = 620;
@@ -100,6 +111,96 @@ public sealed class FoundationUtilityWindow : Window
             }));
     }
 
+    public async Task ShowDownloadsAsync()
+    {
+        Title = "Downloads — Orbit Navigator";
+        if (!_downloadsSubscribed)
+        {
+            _downloads.Changed += OnDownloadsChanged;
+            Closed += (_, _) => _downloads.Changed -= OnDownloadsChanged;
+            _downloadsSubscribed = true;
+        }
+
+        var result = await _downloads.QueryAsync(new(_context, DownloadsFacade.MaximumRecords));
+        var selectedId = (_items.SelectedItem as DownloadListItem)?.Record.Id;
+        var entries = result.IsSuccess
+            ? result.Value!.Select(record => new DownloadListItem(record)).ToArray()
+            : [];
+        _items.ItemsSource = entries;
+        _items.DisplayMemberPath = nameof(DownloadListItem.DisplayText);
+        AutomationProperties.SetName(_items, "Downloads list");
+        if (selectedId is { } id)
+        {
+            _items.SelectedItem = entries.SingleOrDefault(item => item.Record.Id == id);
+        }
+        BuildListSurface(
+            "Downloads",
+            result.IsSuccess
+                ? _context.IsPrivate
+                    ? "Downloads from this private session stay isolated and the list is discarded when the session ends."
+                    : entries.Length == 0
+                        ? "No downloads yet."
+                        : "Downloaded files stay on disk when you clear an item from this list."
+                : "Downloads could not be loaded.",
+            ("Open file", OpenSelectedDownloadAsync),
+            ("Cancel", CancelSelectedDownloadAsync),
+            ("Clear record", ClearSelectedDownloadAsync),
+            ("Refresh", ShowDownloadsAsync));
+        var panel = Content as StackPanel;
+        panel?.Children.Add(_downloadStatus);
+    }
+
+    private async Task OpenSelectedDownloadAsync()
+    {
+        if (_items.SelectedItem is not DownloadListItem selected) return;
+        var opened = await _downloads.OpenFileAsync(new(_context, selected.Record.Id));
+        _downloadStatus.Text = opened.IsSuccess
+            ? "Opened the downloaded file."
+            : "That downloaded file is unavailable or no longer exists.";
+    }
+
+    private async Task CancelSelectedDownloadAsync()
+    {
+        if (_items.SelectedItem is not DownloadListItem selected) return;
+        var cancelled = await _downloads.CancelAsync(new(_context, selected.Record.Id));
+        _downloadStatus.Text = cancelled.IsSuccess
+            ? "Cancellation requested."
+            : "That download is no longer active.";
+    }
+
+    private async Task ClearSelectedDownloadAsync()
+    {
+        if (_items.SelectedItem is not DownloadListItem selected) return;
+        if (MessageBox.Show(
+                this,
+                "Remove this item from the downloads list? The downloaded file will be preserved.",
+                "Orbit Navigator",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        var cleared = await _downloads.ClearRecordsAsync(new(
+            _context,
+            new HashSet<DownloadRecordId> { selected.Record.Id },
+            true));
+        _downloadStatus.Text = cleared.IsSuccess
+            ? "Download record cleared. The downloaded file was preserved."
+            : "That download record could not be cleared.";
+        await ShowDownloadsAsync();
+    }
+
+    private void OnDownloadsChanged(object? sender, EventArgs args)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() => OnDownloadsChanged(sender, args));
+            return;
+        }
+        _ = ShowDownloadsAsync();
+    }
+
     public async Task ShowSettingsAsync()
     {
         Title = "Settings — Orbit Navigator";
@@ -127,84 +228,77 @@ public sealed class FoundationUtilityWindow : Window
         };
         var automatic = new CheckBox
         {
-            Content = "Automatic Primary updates (requires future trusted Windows signing)",
-            IsChecked = false,
-            Margin = new Thickness(0, 6, 0, 12),
+            Content = "Check for Orbit Navigator updates automatically",
+            IsChecked = true,
+            Margin = new Thickness(0, 6, 0, 6),
             IsEnabled = false,
+            ToolTip = "Orbit uses a randomized local schedule and sends no identifying update telemetry.",
         };
-        var allowBeta = new CheckBox
+        var updateDisclosure = new TextBlock
         {
-            Content = "Allow Beta Updates",
-            IsChecked = _betaUpdates.Snapshot.IsBetaOptedIn,
-            Margin = new Thickness(0, 8, 0, 6),
-            IsEnabled = !_context.IsPrivate,
-        };
-        var betaDisclosure = new TextBlock
-        {
-            Text = "Beta packages are authenticated by Orbit's signed manifest and SHA-256 hash, but may not be signed by a Windows-trusted publisher. Windows may show an unknown-publisher warning. Beta never installs silently and every package requires a separate confirmation.",
+            Text = "Orbit verifies a pinned manifest signature, version sequence, package size, and SHA-256 hash before offering an update. Updates never install silently. Until Windows-trusted signing is available, each installer requires a separate confirmation and Windows may show an unknown-publisher warning.",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 8),
         };
-        var betaStatus = new TextBlock
+        var updateStatus = new TextBlock
         {
-            Text = _betaUpdates.Snapshot.StatusMessage,
+            Text = _updates.Snapshot.StatusMessage,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 8, 0, 8),
         };
-        var checkBeta = new Button { Content = "Check for Beta update", MinWidth = 160, Margin = new Thickness(0, 0, 8, 0) };
-        var downloadBeta = new Button { Content = "Download verified Beta", MinWidth = 170, Margin = new Thickness(0, 0, 8, 0) };
-        var installBeta = new Button { Content = "Install verified Beta...", MinWidth = 170 };
-        var betaActions = new StackPanel { Orientation = Orientation.Horizontal };
-        betaActions.Children.Add(checkBeta);
-        betaActions.Children.Add(downloadBeta);
-        betaActions.Children.Add(installBeta);
+        var checkUpdate = new Button { Content = "Check for updates", MinWidth = 150, Margin = new Thickness(0, 0, 8, 0) };
+        var downloadUpdate = new Button { Content = "Download verified update", MinWidth = 185, Margin = new Thickness(0, 0, 8, 0) };
+        var installUpdate = new Button { Content = "Install verified update...", MinWidth = 180 };
+        var updateActions = new WrapPanel();
+        updateActions.Children.Add(checkUpdate);
+        updateActions.Children.Add(downloadUpdate);
+        updateActions.Children.Add(installUpdate);
 
-        void RenderBeta(BetaUpdateSnapshot snapshot)
+        void RenderUpdate(PrimaryUpdateSnapshot snapshot)
         {
             if (!Dispatcher.CheckAccess())
             {
-                Dispatcher.BeginInvoke(() => RenderBeta(snapshot));
+                Dispatcher.BeginInvoke(() => RenderUpdate(snapshot));
                 return;
             }
-            allowBeta.IsChecked = snapshot.IsBetaOptedIn;
-            betaStatus.Text = snapshot.StatusMessage;
-            checkBeta.IsEnabled = !_context.IsPrivate && snapshot.IsBetaOptedIn &&
-                snapshot.Lifecycle is not BetaUpdateLifecycle.Checking and not BetaUpdateLifecycle.Downloading;
-            downloadBeta.IsEnabled = !_context.IsPrivate &&
-                snapshot.Lifecycle == BetaUpdateLifecycle.Available;
-            installBeta.IsEnabled = !_context.IsPrivate &&
-                snapshot.Lifecycle == BetaUpdateLifecycle.ReadyToInstall;
+            updateStatus.Text = snapshot.StatusMessage;
+            checkUpdate.IsEnabled = !_context.IsPrivate &&
+                snapshot.Lifecycle is not PrimaryUpdateLifecycle.Checking and not PrimaryUpdateLifecycle.Downloading;
+            downloadUpdate.IsEnabled = !_context.IsPrivate &&
+                snapshot.Lifecycle == PrimaryUpdateLifecycle.Available;
+            installUpdate.IsEnabled = !_context.IsPrivate &&
+                snapshot.Lifecycle == PrimaryUpdateLifecycle.ReadyToInstall;
         }
-        void OnBetaSnapshotChanged(object? _, BetaUpdateSnapshot snapshot) => RenderBeta(snapshot);
-        _betaUpdates.SnapshotChanged += OnBetaSnapshotChanged;
-        Closed += (_, _) => _betaUpdates.SnapshotChanged -= OnBetaSnapshotChanged;
-        RenderBeta(_betaUpdates.Snapshot);
+        void OnUpdateSnapshotChanged(object? _, PrimaryUpdateSnapshot snapshot) => RenderUpdate(snapshot);
+        _updates.SnapshotChanged += OnUpdateSnapshotChanged;
+        Closed += (_, _) => _updates.SnapshotChanged -= OnUpdateSnapshotChanged;
+        RenderUpdate(_updates.Snapshot);
 
-        checkBeta.Click += async (_, _) =>
+        checkUpdate.Click += async (_, _) =>
         {
-            var checkedResult = await _betaUpdates.CheckAsync();
-            if (!checkedResult.IsSuccess) betaStatus.Text = "The Beta feed is offline or could not be verified. Local browsing is unaffected.";
+            var checkedResult = await _updates.CheckAsync();
+            if (!checkedResult.IsSuccess) updateStatus.Text = "The update feed is offline or could not be verified. Local browsing is unaffected.";
         };
-        downloadBeta.Click += async (_, _) =>
+        downloadUpdate.Click += async (_, _) =>
         {
-            var downloaded = await _betaUpdates.DownloadAsync();
-            if (!downloaded.IsSuccess) betaStatus.Text = "The Beta package could not be downloaded and verified.";
+            var downloaded = await _updates.DownloadAsync();
+            if (!downloaded.IsSuccess) updateStatus.Text = "The update could not be downloaded and verified.";
         };
-        installBeta.Click += async (_, _) =>
+        installUpdate.Click += async (_, _) =>
         {
-            var snapshot = _betaUpdates.Snapshot;
-            if (snapshot.Lifecycle != BetaUpdateLifecycle.ReadyToInstall) return;
+            var snapshot = _updates.Snapshot;
+            if (snapshot.Lifecycle != PrimaryUpdateLifecycle.ReadyToInstall) return;
             var version = snapshot.StagedPackage?.Package.Version?.ToString() ?? "available";
             var approved = MessageBox.Show(
                 this,
-                $"Install Orbit Navigator Beta {version}?\n\nThe manifest signature, version, size, and SHA-256 hash have been verified. This installer is not signed by a Windows-trusted publisher, so Windows may show an unknown-publisher warning. Setup will remain visible and may ask you to close Orbit Navigator. Continue only if you deliberately want this Beta package.",
-                "Confirm unsigned Orbit Navigator Beta",
+                $"Install Orbit Navigator {version}?\n\nThe manifest signature, version sequence, size, and SHA-256 hash have been verified. This installer is not yet signed by a Windows-trusted publisher, so Windows may show an unknown-publisher warning. Setup remains visible and may ask you to close Orbit Navigator. Continue only if you deliberately want this update.",
+                "Confirm Orbit Navigator update",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning) == MessageBoxResult.Yes;
             if (!approved) return;
-            var launched = await _betaUpdates.ApproveAndLaunchAsync(
+            var launched = await _updates.ApproveAndLaunchAsync(
                 deliberatePerPackageConfirmation: true);
-            if (!launched.IsSuccess) betaStatus.Text = "The verified Beta installer could not be opened.";
+            if (!launched.IsSuccess) updateStatus.Text = "The verified Orbit Navigator installer could not be opened.";
         };
         var save = new Button
         {
@@ -217,22 +311,6 @@ public sealed class FoundationUtilityWindow : Window
         save.Click += async (_, _) =>
         {
             if (_settingsSnapshot is null) return;
-            var wantsBeta = allowBeta.IsChecked == true;
-            if (wantsBeta && !_betaUpdates.Snapshot.IsBetaOptedIn)
-            {
-                var confirmed = MessageBox.Show(
-                    this,
-                    "Allow Beta Updates?\n\nBeta builds may be unsigned by a Windows-trusted publisher. Orbit still requires a valid pinned manifest signature and package hash, never installs a Beta silently, and asks again before launching each installer.",
-                    "Allow Beta Updates",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning) == MessageBoxResult.Yes;
-                if (!confirmed)
-                {
-                    allowBeta.IsChecked = false;
-                    wantsBeta = false;
-                }
-            }
-            var channelSaved = await _betaUpdates.SetBetaOptInAsync(wantsBeta);
             var updated = await _settings.UpdateAsync(new(
                 _context,
                 _settingsSnapshot.Revision,
@@ -242,7 +320,7 @@ public sealed class FoundationUtilityWindow : Window
                     ask.IsChecked == true,
                     UpdatePreference.NotifyOnly)));
             if (updated.IsSuccess) _settingsSnapshot = updated.Value;
-            status.Text = updated.IsSuccess && channelSaved.IsSuccess
+            status.Text = updated.IsSuccess
                 ? "Settings saved."
                 : "Settings could not be saved. Refresh and try again.";
         };
@@ -254,10 +332,9 @@ public sealed class FoundationUtilityWindow : Window
         panel.Children.Add(restore);
         panel.Children.Add(ask);
         panel.Children.Add(automatic);
-        panel.Children.Add(allowBeta);
-        panel.Children.Add(betaDisclosure);
-        panel.Children.Add(betaActions);
-        panel.Children.Add(betaStatus);
+        panel.Children.Add(updateDisclosure);
+        panel.Children.Add(updateActions);
+        panel.Children.Add(updateStatus);
         panel.Children.Add(save);
         panel.Children.Add(status);
         var account = new MyOrbitAccountSettingsControl
@@ -292,6 +369,38 @@ public sealed class FoundationUtilityWindow : Window
         }
         panel.Children.Add(_actions);
         Content = panel;
+    }
+
+    private sealed record DownloadListItem(DownloadRecord Record)
+    {
+        public string DisplayText
+        {
+            get
+            {
+                var progress = Record.TotalBytes is > 0
+                    ? $" — {Math.Clamp((int)(Record.ReceivedBytes * 100d / Record.TotalBytes.Value), 0, 100)}%"
+                    : Record.ReceivedBytes > 0
+                        ? $" — {FormatBytes(Record.ReceivedBytes)} received"
+                        : string.Empty;
+                var state = Record.State switch
+                {
+                    DownloadLifecycleState.InProgress => "Downloading",
+                    DownloadLifecycleState.Completed => "Complete",
+                    DownloadLifecycleState.Cancelled => "Cancelled",
+                    DownloadLifecycleState.Failed => "Interrupted",
+                    _ => "Unknown",
+                };
+                return $"{Record.FileName} — {state}{progress} — from {Record.Source.IdnHost}";
+            }
+        }
+
+        private static string FormatBytes(long bytes) => bytes switch
+        {
+            >= 1024L * 1024L * 1024L => $"{bytes / (1024d * 1024d * 1024d):0.##} GB",
+            >= 1024L * 1024L => $"{bytes / (1024d * 1024d):0.##} MB",
+            >= 1024L => $"{bytes / 1024d:0.##} KB",
+            _ => $"{bytes} bytes",
+        };
     }
 
     private static FrameworkElement BuildMessage(string heading, string message) =>

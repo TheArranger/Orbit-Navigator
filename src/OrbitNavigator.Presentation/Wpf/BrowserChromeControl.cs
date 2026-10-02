@@ -151,6 +151,8 @@ public sealed class BrowserChromeControl : Grid
     private bool systemParameterEventsAttached;
     private bool reducedMotion;
     private bool compactTabMode;
+    private bool isFullscreen;
+    private double windowedMinimumHeight;
     private BrowserWorkspacePreferences workspacePreferences = BrowserWorkspacePreferences.Default;
     private Func<WorkspaceLocalArtworkImportRequest, WorkspaceArtworkPresentation?>? workspaceLocalArtworkImporter;
     private TabControllerPresentationSession? tabControllerSession;
@@ -174,8 +176,8 @@ public sealed class BrowserChromeControl : Grid
         homeButton = CreateNavigationButton("Home", "Go to home page", RequestHome);
         privateWindowButton = CreateNavigationButton("Private +", "New private window", RequestPrivateWindow);
         collapseModeButton = CreateNavigationButton(
-            Icon(OrbitIconKind.ChevronRight, 18),
-            "Collapse inactive tabs",
+            IconLabel(OrbitIconKind.ChevronRight, "Condense inactive tabs"),
+            "Condense inactive tabs",
             ToggleCollapseToActive);
         compactTabsButton = CreateNavigationButton(
             "Compact tabs",
@@ -205,6 +207,12 @@ public sealed class BrowserChromeControl : Grid
 
         BuildLayout();
         quickView.ActionRequested += (_, args) => QuickViewActionRequested?.Invoke(this, args);
+        quickView.OverlayPopup.Opened += (_, _) =>
+        {
+            // Quick View uses a separate native popup, so hiding its WPF
+            // placement target alone does not suppress it during fullscreen.
+            if (isFullscreen) quickView.OverlayPopup.IsOpen = false;
+        };
         SizeChanged += (_, _) =>
         {
             quickView.ApplyOwnerViewport(new(
@@ -249,6 +257,9 @@ public sealed class BrowserChromeControl : Grid
     public event EventHandler<UtilitySurfaceRequestedEventArgs>? UtilitySurfaceRequested;
 
     public event EventHandler? ShowTabsRequested;
+
+    /// <summary>Requests that the owner leave both native and content fullscreen.</summary>
+    public event EventHandler? FullscreenExitRequested;
 
     public event EventHandler<ResourceMonitorRequestedEventArgs>? ResourceMonitorRequested;
 
@@ -302,6 +313,10 @@ public sealed class BrowserChromeControl : Grid
     public bool IsResourceMonitorVisible => resourceMonitorVisible;
 
     public bool IsCompactTabMode => compactTabMode;
+
+    public bool IsFullscreen => isFullscreen;
+
+    public bool IsAddressBarVisible => omnibox.Visibility == Visibility.Visible;
 
     public GridSplitter SideTabPanelResizeHandle => sideTabPanelResizeHandle;
 
@@ -379,6 +394,39 @@ public sealed class BrowserChromeControl : Grid
     public void ApplyQuickViewWebContent(UIElement? webContent) => quickView.WebContent = webContent;
 
     public void ResetQuickViewForFreshUse() => quickView.ResetForFreshUse();
+
+    /// <summary>
+    /// Expands the existing content host without reparenting its live WebView.
+    /// Fullscreen is transient presentation state and never changes preferences.
+    /// </summary>
+    public void ApplyFullscreen(bool enabled)
+    {
+        if (isFullscreen == enabled)
+        {
+            return;
+        }
+
+        if (enabled)
+        {
+            windowedMinimumHeight = MinHeight;
+            MinHeight = 0;
+            if (activeBrowserMenu is not null) activeBrowserMenu.IsOpen = false;
+        }
+        else
+        {
+            MinHeight = windowedMinimumHeight;
+        }
+
+        isFullscreen = enabled;
+        ApplyTabStripPlacement();
+        quickView.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
+        quickView.OverlayPopup.IsOpen = !enabled && quickView.IsLoaded &&
+            quickView.Presentation.CanShowAnchor;
+        if (enabled && IsPermissionPromptVisible)
+        {
+            FullscreenExitRequested?.Invoke(this, EventArgs.Empty);
+        }
+    }
 
     /// <summary>
     /// Replaces the legacy strip with the reusable, non-overlay controller. The
@@ -592,6 +640,7 @@ public sealed class BrowserChromeControl : Grid
         var previous = workspacePreferences;
         var focusTarget = CaptureTabStripFocus();
         workspacePreferences = next;
+        omnibox.Visibility = next.ShowAddressBar ? Visibility.Visible : Visibility.Collapsed;
         ApplyTabStripPlacement();
         dockedTabController?.ApplyLayoutPlacement(next.TabStripPlacement);
         UpdateWorkspacePreferenceControls();
@@ -810,7 +859,7 @@ public sealed class BrowserChromeControl : Grid
         toolbar.Children.Add(collapseModeButton);
         AutomationProperties.SetHelpText(
             collapseModeButton,
-            "Shows inactive tabs in a compact form. Keyboard shortcut: Alt+Shift+C.");
+            "Condenses inactive tabs to save space. Keyboard shortcut: Alt+Shift+C.");
         privateIndicator.Child = privateIndicatorText;
         DockPanel.SetDock(privateIndicator, Dock.Right);
         toolbar.Children.Add(privateIndicator);
@@ -860,6 +909,33 @@ public sealed class BrowserChromeControl : Grid
             tabControllerHostState is TabControllerHostState.Opening or
                 TabControllerHostState.Detached or
                 TabControllerHostState.Closing;
+        tabSurface.Visibility = isFullscreen || controllerSuppressed
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        toolbarSurface.Visibility = isFullscreen ? Visibility.Collapsed : Visibility.Visible;
+        showTabsButton.Visibility = !isFullscreen && controllerSuppressed
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        if (isFullscreen)
+        {
+            sideTabPanelResizeHandle.Visibility = Visibility.Collapsed;
+            foreach (var column in ColumnDefinitions)
+            {
+                column.MinWidth = 0;
+                column.MaxWidth = double.PositiveInfinity;
+            }
+            ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            ColumnDefinitions[1].Width = new GridLength(0);
+            RowDefinitions[0].Height = new GridLength(0);
+            RowDefinitions[1].Height = new GridLength(0);
+            RowDefinitions[2].Height = new GridLength(0);
+            RowDefinitions[3].Height = new GridLength(1, GridUnitType.Star);
+            Place(contentHost, 0, 0, 4, 2);
+            Place(permissionSurface, 0, 0, 4, 2);
+            Place(quickView, 0, 0, 4, 2);
+            UpdatePermissionSurfaceBounds();
+            return;
+        }
         tabRow.Orientation = isVertical ? Orientation.Vertical : Orientation.Horizontal;
         // The reusable controller owns overflow with reserved controls. The
         // legacy fallback is clipped and never draws a scrollbar over tabs.
@@ -940,7 +1016,7 @@ public sealed class BrowserChromeControl : Grid
     private void OnSideTabPanelResizeCompleted(object sender, DragCompletedEventArgs args)
     {
         var placement = workspacePreferences.TabStripPlacement;
-        if (args.Canceled ||
+        if (isFullscreen || args.Canceled ||
             placement is not (TabStripPlacement.Left or TabStripPlacement.Right))
         {
             ApplyTabStripPlacement();
@@ -1189,19 +1265,29 @@ public sealed class BrowserChromeControl : Grid
         tabLayoutButton.ToolTip = "Change tab placement";
         AutomationProperties.SetName(tabLayoutButton, "Change tab placement");
         AutomationProperties.SetItemStatus(tabLayoutButton, $"Tabs: {placementLabel}");
-        collapseModeButton.Content = Icon(
+        var collapseActionLabel = workspacePreferences.CollapseToActive
+            ? "Expand inactive tabs"
+            : "Condense inactive tabs";
+        collapseModeButton.Content = IconLabel(
             workspacePreferences.CollapseToActive ? OrbitIconKind.ChevronDown : OrbitIconKind.ChevronRight,
-            18);
+            collapseActionLabel);
+        collapseModeButton.ToolTip = canPersist
+            ? workspacePreferences.CollapseToActive
+                ? "Restore full titles for inactive tabs (Alt+Shift+C)"
+                : "Condense inactive tabs to save space (Alt+Shift+C)"
+            : "Tab layout preferences are unavailable until the profile is ready.";
         AutomationProperties.SetName(
             collapseModeButton,
-            workspacePreferences.CollapseToActive ? "Show full tabs" : "Collapse inactive tabs");
+            collapseActionLabel);
         AutomationProperties.SetItemStatus(
             collapseModeButton,
             workspacePreferences.CollapseToActive ? "On" : "Off");
         AutomationProperties.SetHelpText(
             collapseModeButton,
             canPersist
-                ? "Shows inactive tabs in a compact form. Keyboard shortcut: Alt+Shift+C."
+                ? workspacePreferences.CollapseToActive
+                    ? "Restores full titles for inactive tabs. Keyboard shortcut: Alt+Shift+C."
+                    : "Condenses inactive tabs to save space. Keyboard shortcut: Alt+Shift+C."
                 : "Tab layout preferences are unavailable until the profile is ready.");
         AutomationProperties.SetHelpText(
             tabLayoutButton,
@@ -1632,7 +1718,12 @@ public sealed class BrowserChromeControl : Grid
     {
         var modifiers = args.KeyboardDevice.Modifiers;
         var shortcutKey = args.Key == Key.System ? args.SystemKey : args.Key;
-        if (TryHandleWorkspaceShortcut(shortcutKey, modifiers))
+        if (isFullscreen && shortcutKey == Key.Escape)
+        {
+            FullscreenExitRequested?.Invoke(this, EventArgs.Empty);
+            args.Handled = true;
+        }
+        else if (TryHandleWorkspaceShortcut(shortcutKey, modifiers))
         {
             args.Handled = true;
         }
@@ -1721,6 +1812,13 @@ public sealed class BrowserChromeControl : Grid
                 Dispatcher.BeginInvoke(() => omnibox.Focus());
             }
             return;
+        }
+
+        if (isFullscreen)
+        {
+            // The owner controls native fullscreen and WebView airspace. Ask it
+            // to leave fullscreen before presenting a browser permission choice.
+            FullscreenExitRequested?.Invoke(this, EventArgs.Empty);
         }
 
         var heading = new TextBlock
@@ -2186,12 +2284,38 @@ public sealed class BrowserChromeControl : Grid
             () => OfflineReadingActionRequested is not null && !offlineReading.IsPrivate,
             () => OfflineReadingUnavailableReason(forSave: false)));
         menu.Items.Add(new Separator());
+        var addressBar = CreateMenuItem(
+            "Show address bar",
+            ToggleAddressBar,
+            canExecute: () => workspacePreferencesChanged is not null,
+            unavailableReason: "Address bar visibility is unavailable until profile preferences are ready.");
+        addressBar.IsCheckable = true;
+        addressBar.IsChecked = workspacePreferences.ShowAddressBar;
+        AutomationProperties.SetHelpText(
+            addressBar,
+            "Show or hide the address and search field. This command remains available while it is hidden.");
+        menu.Items.Add(addressBar);
+        menu.Items.Add(new Separator());
         menu.Items.Add(CreateMenuItem("Settings", () => RequestSurface(InternalPageKind.Settings), OrbitIconKind.Settings,
             () => IsUtilityAvailable(InternalPageKind.Settings),
             () => GetUtilityUnavailableReason(InternalPageKind.Settings)));
         RefreshMenuAvailability(menu);
         OrbitVisualTheme.ApplyContextMenu(menu);
         return menu;
+    }
+
+    private void ToggleAddressBar()
+    {
+        if (workspacePreferencesChanged is null)
+        {
+            Announce("Address bar visibility cannot be changed until profile preferences are ready.");
+            return;
+        }
+
+        RequestWorkspacePreferenceChange(workspacePreferences with
+        {
+            ShowAddressBar = !workspacePreferences.ShowAddressBar,
+        });
     }
 
     private MenuItem CreateMenuItem(

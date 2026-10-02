@@ -499,8 +499,12 @@ public sealed class BrowserWorkspaceCoordinator : IAsyncDisposable
     {
         var tabs = browser.Tabs.Select(tab => new BrowserWorkspaceSessionTab(
             tab.TabId,
-            tab.Address is null ? null : CanonicalWebAddress.Normalize(tab.Address),
-            string.IsNullOrWhiteSpace(tab.Title) ? "New Tab" : tab.Title,
+            tab.InternalPage == BrowserInternalPageKind.None && tab.Address is not null
+                ? CanonicalWebAddress.Normalize(tab.Address)
+                : null,
+            tab.InternalPage == BrowserInternalPageKind.None && !string.IsNullOrWhiteSpace(tab.Title)
+                ? tab.Title
+                : "New Tab",
             tab.GroupId)).ToArray();
         var storedGroups = groups.Values.Select(group => new BrowserWorkspaceSessionGroup(
             group.GroupId,
@@ -567,7 +571,10 @@ public sealed class BrowserWorkspaceCoordinator : IAsyncDisposable
         state.Tabs.Any(tab => tab.TabId == selected);
 
     private static bool ValidateTab(BrowserTabState tab) =>
-        tab is not null && !tab.TabId.IsEmpty;
+        tab is not null &&
+        !tab.TabId.IsEmpty &&
+        Enum.IsDefined(tab.InternalPage) &&
+        (tab.InternalPage == BrowserInternalPageKind.None || tab.Address is null);
 
     private static bool ValidName(string name) =>
         !string.IsNullOrWhiteSpace(name) && name.Length <= TabGroupMetadataStore.MaximumGroupNameLength;
