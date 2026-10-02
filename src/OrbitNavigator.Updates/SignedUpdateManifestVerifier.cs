@@ -27,7 +27,26 @@ public sealed partial class SignedUpdateManifestVerifier
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    public ControllerResult<VerifiedUpdateManifest> Verify(ReadOnlySpan<byte> utf8Json)
+    public ControllerResult<VerifiedUpdateManifest> Verify(ReadOnlySpan<byte> utf8Json) =>
+        VerifyCore(utf8Json, allowInstalledVersion: false, acceptedManifestSha256: null);
+
+    // The primary client's idempotent checks may revisit an installed version or the
+    // exact signed envelope accepted when downloading. Neither exception relaxes
+    // signature, channel, origin, package, expiry, or rollout validation.
+    internal ControllerResult<VerifiedUpdateManifest> VerifyCurrentFeed(
+        ReadOnlySpan<byte> utf8Json,
+        string? acceptedManifestSha256) =>
+        VerifyCore(utf8Json, allowInstalledVersion: true, acceptedManifestSha256);
+
+    internal static bool IsSameVersion(Version left, Version right) =>
+        left.Major == right.Major && left.Minor == right.Minor &&
+        Math.Max(0, left.Build) == Math.Max(0, right.Build) &&
+        Math.Max(0, left.Revision) == Math.Max(0, right.Revision);
+
+    private ControllerResult<VerifiedUpdateManifest> VerifyCore(
+        ReadOnlySpan<byte> utf8Json,
+        bool allowInstalledVersion,
+        string? acceptedManifestSha256)
     {
         if (utf8Json.IsEmpty || utf8Json.Length > _policy.MaximumManifestBytes)
         {
@@ -62,13 +81,28 @@ public sealed partial class SignedUpdateManifestVerifier
             return Failure(ControllerErrorCode.PolicyDenied, "error.update.manifest_policy_mismatch");
         }
 
-        if (document.ReleaseSequence <= _policy.LastAcceptedReleaseSequence)
+        var hasVersion = Version.TryParse(document.Version, out var version);
+        var isInstalledVersion = hasVersion && IsSameVersion(version!, _policy.CurrentVersion);
+        var isExactAcceptedManifest = acceptedManifestSha256 is not null &&
+            string.Equals(
+                Convert.ToHexString(SHA256.HashData(utf8Json)),
+                acceptedManifestSha256,
+                StringComparison.OrdinalIgnoreCase);
+        // Older clients persisted only the sequence when downloading. After that
+        // installer has actually become the running version, an unbound equal
+        // sequence can describe installed status only; it can never offer or stage
+        // an update. An existing identity mismatch never gets this exception.
+        var isLegacyInstalledStatus = allowInstalledVersion && isInstalledVersion &&
+            acceptedManifestSha256 is null && _policy.LastAcceptedReleaseSequence > 0;
+        if (document.ReleaseSequence < _policy.LastAcceptedReleaseSequence ||
+            document.ReleaseSequence == _policy.LastAcceptedReleaseSequence &&
+                !isExactAcceptedManifest && !isLegacyInstalledStatus)
         {
             return Failure(ControllerErrorCode.StaleClient, "error.update.manifest_replayed");
         }
 
-        if (!Version.TryParse(document.Version, out var version) ||
-            version <= _policy.CurrentVersion)
+        if (!hasVersion || version! <= _policy.CurrentVersion &&
+                !(allowInstalledVersion && isInstalledVersion))
         {
             return Failure(ControllerErrorCode.PolicyDenied, "error.update.version_not_newer");
         }
@@ -111,7 +145,7 @@ public sealed partial class SignedUpdateManifestVerifier
 
         return ControllerResult<VerifiedUpdateManifest>.Success(new VerifiedUpdateManifest(
             new UpdatePackageInfo(
-                version,
+                version!,
                 packageUri,
                 document.Sha256.ToUpperInvariant(),
                 document.SizeBytes,

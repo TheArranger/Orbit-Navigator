@@ -99,6 +99,19 @@ public sealed class SignedUpdateManifestVerifierTests
     }
 
     [Fact]
+    public void GeneralVerifierStillRejectsAlreadyInstalledVersion()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var verifier = CreateVerifier(key);
+        var installed = CreateDocument() with { Version = "1.0.0" };
+
+        var result = verifier.Verify(SerializeSigned(key, installed));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("error.update.version_not_newer", result.Error?.MessageKey);
+    }
+
+    [Fact]
     public void ExpiredManifestIsRejected()
     {
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
