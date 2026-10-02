@@ -145,7 +145,8 @@ $evidence = [IO.Path]::GetFullPath($EvidenceRoot)
 $dotnet = [IO.Path]::GetFullPath($DotNetHost)
 $applicationDll = [IO.Path]::ChangeExtension($application, ".dll")
 $sameOutputProcesses = @(Get-CimInstance Win32_Process | Where-Object {
-    $_.CommandLine -and $_.CommandLine.Contains($applicationDll, [StringComparison]::OrdinalIgnoreCase)
+    $_.CommandLine -and
+        $_.CommandLine.IndexOf($applicationDll, [StringComparison]::OrdinalIgnoreCase) -ge 0
 })
 if ($sameOutputProcesses.Count) {
     throw "The selected Release output is already running."
@@ -175,22 +176,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
 socketserver.TCPServer.allow_reuse_address = True
 with socketserver.TCPServer(('127.0.0.1', __PORT__), Handler) as server: server.serve_forever()
 '@.Replace("__PORT__", $port)
+$pythonScriptPath = Join-Path $env:TEMP ("orbit-quick-view-{0}.py" -f [Guid]::NewGuid().ToString('N'))
+[IO.File]::WriteAllText($pythonScriptPath, $pythonSource, [Text.UTF8Encoding]::new($false))
 $serverInfo = [Diagnostics.ProcessStartInfo]::new()
 $serverInfo.FileName = (Get-Command python -ErrorAction Stop).Source
 $serverInfo.UseShellExecute = $false
 $serverInfo.CreateNoWindow = $true
-$serverInfo.ArgumentList.Add("-c")
-$serverInfo.ArgumentList.Add($pythonSource)
+$serverInfo.Arguments = '"' + $pythonScriptPath + '"'
 $server = [Diagnostics.Process]::Start($serverInfo)
 $startInfo = [Diagnostics.ProcessStartInfo]::new()
 $startInfo.FileName = $dotnet
 $startInfo.UseShellExecute = $false
-    $startInfo.ArgumentList.Add($applicationDll)
 $runId = [Guid]::NewGuid()
-$startInfo.ArgumentList.Add('--acceptance-profile-root')
-$startInfo.ArgumentList.Add($profile)
-$startInfo.ArgumentList.Add('--acceptance-run-id')
-$startInfo.ArgumentList.Add($runId.ToString('D'))
+$startInfo.Arguments = '"' + $applicationDll + '" --acceptance-profile-root "' +
+    $profile + '" --acceptance-run-id ' + $runId.ToString('D')
 $process = $null
 try {
     Start-Sleep -Milliseconds 400
@@ -248,7 +247,7 @@ try {
         Wait-OrbitCondition {
             $script:offlineWindow = Find-OrbitElement `
                 ([System.Windows.Automation.AutomationElement]::RootElement) `
-                "Offline library — Orbit Navigator" `
+                "Offline library $([char]0x2014) Orbit Navigator" `
                 $false
             $null -ne $script:offlineWindow -and -not $script:offlineWindow.Current.IsOffscreen
         } "The host-owned Offline library window did not open."
@@ -465,4 +464,7 @@ finally {
         if (-not $process.WaitForExit(5000)) { Stop-Process -Id $process.Id -Force }
     }
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+    if (Test-Path -LiteralPath $pythonScriptPath) {
+        Remove-Item -LiteralPath $pythonScriptPath -Force
+    }
 }

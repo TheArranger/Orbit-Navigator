@@ -1,20 +1,15 @@
 Orbit Navigator
 
-This Source Code Form is subject to the terms of the Mozilla Public
-License, v. 2.0. If a copy of the MPL was not distributed with this
-file, You can obtain one at https://mozilla.org/MPL/2.0/.
+Copyright (c) 2026 Orbit Nav Pub
 
-Copyright © 2026 Orbit Nav Pub.
+Orbit Navigator is open-source software published by Orbit Nav Pub under the
+MIT License. The project maintainer is Paradox (aka TheArranger or
+TheCodeArranger). See LICENSE for permission to use, modify, distribute,
+sublicense, and sell copies, subject to retaining its notices.
 
-Published as an open-source project by Orbit Nav Pub. The project maintainer
-is Paradox (aka TheArranger or TheCodeArranger).
-
-Unless a file is identified as third-party material, the MPL-2.0 grant
-covers the original source code, build and test scripts, documentation,
-and project-created artwork in this repository.
-
-The Orbit Navigator name, logo, application icon, and associated product
-identity are not licensed as trademarks under the MPL. See TRADEMARKS.md.
+First-party artwork is also MIT-licensed to the extent Orbit Nav Pub holds
+rights in it. The separate trademark policy prohibits deceptive endorsement,
+not the copyright permissions granted by MIT. See TRADEMARKS.md.
 
 Third-party components retain their own copyrights and licenses. See
 THIRD-PARTY-NOTICES.md and the license texts under third-party/.

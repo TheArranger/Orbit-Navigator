@@ -22,11 +22,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $seedCommand = @"
-mkdir -p /srv/orbit-updates/primary /srv/orbit-updates/beta
+mkdir -p /srv/orbit-updates/primary
 printf primary-manifest > /srv/orbit-updates/primary/manifest.json
-printf beta-manifest > /srv/orbit-updates/beta/manifest.json
 printf primary-package > /srv/orbit-updates/primary/OrbitNavigator-1.2.0.exe
-printf beta-package > /srv/orbit-updates/beta/OrbitNavigator-1.2.0-beta.1.exe
 exec nginx -c /etc/nginx/nginx.conf -g 'daemon off;'
 "@
 
@@ -67,9 +65,6 @@ try {
     if ((Get-Body "/primary/manifest.json") -ne "primary-manifest") {
         throw "Primary did not resolve to its own root."
     }
-    if ((Get-Body "/beta/manifest.json") -ne "beta-manifest") {
-        throw "Beta did not resolve to its own root."
-    }
     if ((Get-Status GET "/primary/OrbitNavigator-1.2.0-beta.1.exe") -ne "404") {
         throw "A Beta package crossed into the Primary route."
     }
@@ -79,11 +74,17 @@ try {
     if ((Get-Status GET "/primary/%2e%2e/beta/manifest.json" -RawPath) -ne "400") {
         throw "Encoded dot-segment traversal was not rejected."
     }
-    if ((Get-Status PUT "/beta/manifest.json") -ne "403") {
-        throw "The read-only Beta route accepted an unexpected method."
+    if ((Get-Status GET "/beta/manifest.json") -ne "404") {
+        throw "The retired Beta route is still exposed."
+    }
+    if ((Get-Status GET "/primary/") -ne "404") {
+        throw "The Primary route exposed a directory listing."
+    }
+    if ((Get-Status PUT "/primary/manifest.json") -ne "403") {
+        throw "The read-only Primary route accepted an unexpected method."
     }
 
-    Write-Host "Update-feed channel isolation passed."
+    Write-Host "Primary update-feed isolation passed."
 }
 finally {
     docker stop $containerName | Out-Null

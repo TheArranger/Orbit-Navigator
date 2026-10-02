@@ -32,18 +32,57 @@ $missing = @($required | Where-Object {
     -not (Test-Path -LiteralPath (Join-Path $projectRoot $_) -PathType Leaf)
 })
 if ($missing.Count -gt 0) {
-    throw "Required open-source files are missing: $($missing -join ', ')"
+    throw "Required release files are missing: $($missing -join ', ')"
 }
 
 $license = Get-Content -LiteralPath (Join-Path $projectRoot 'LICENSE') -Raw
-if ($license -notmatch 'Mozilla Public License Version 2\.0') {
-    throw 'LICENSE is not the canonical MPL-2.0 license text.'
+$expectedMitLicense = @'
+MIT License
+Copyright (c) 2026 Orbit Nav Pub
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+'@
+if (($license -replace '\s+', ' ').Trim() -cne
+    ($expectedMitLicense -replace '\s+', ' ').Trim()) {
+    throw 'LICENSE must contain the unmodified standard MIT terms and Orbit Nav Pub copyright notice.'
 }
 
 [xml]$buildProps = Get-Content -LiteralPath (Join-Path $projectRoot 'Directory.Build.props') -Raw
-$expression = [string]$buildProps.Project.PropertyGroup.PackageLicenseExpression
-if ($expression -ne 'MPL-2.0') {
-    throw 'Directory.Build.props must declare PackageLicenseExpression MPL-2.0.'
+$licenseExpression = $buildProps.SelectSingleNode('//PackageLicenseExpression')
+if ($null -eq $licenseExpression -or $licenseExpression.InnerText -cne 'MIT') {
+    throw 'Directory.Build.props must advertise the SPDX MIT license expression.'
+}
+
+$firstPartyLicenseDocs = @(
+    'NOTICE', 'README.md', 'CONTRIBUTING.md', 'GOVERNANCE.md', 'TRADEMARKS.md',
+    'SUPPORT.md', 'assets\README.md', 'CODE_SIGNING_POLICY.md',
+    'THIRD-PARTY-NOTICES.md', 'docs\open-source\PublicationChecklist.md'
+)
+foreach ($relativePath in $firstPartyLicenseDocs) {
+    $document = Get-Content -LiteralPath (Join-Path $projectRoot $relativePath) -Raw
+    if ($document -match 'source-visible proprietary|not licensed for modification|not open source|limited permission covering official') {
+        throw "Conflicting first-party license language remains in $relativePath."
+    }
+}
+
+$signingPolicy = Get-Content -LiteralPath (Join-Path $projectRoot 'CODE_SIGNING_POLICY.md') -Raw
+if ($signingPolicy -notmatch 'No public-trust\s+signing provider has approved' -or
+    $signingPolicy -notmatch 'no commercial dual licensing' -or
+    $signingPolicy -notmatch 'System Libraries') {
+    throw 'Signing policy must disclose unapproved status and the separate provider-eligibility gates.'
 }
 
 $installer = Get-Content -LiteralPath (Join-Path $projectRoot 'installer\OrbitNavigator.Setup.iss') -Raw
@@ -84,15 +123,15 @@ if (@($forbidden).Count -gt 0) {
 
 [pscustomobject]@{
     Result = 'PASS'
-    License = 'MPL-2.0'
+    License = 'MIT'
     RequiredFiles = $required.Count
     LockedProjects = $projects.Count
-    SigningStatus = 'Not yet enrolled with SignPath Foundation'
+    SigningStatus = 'Unsigned; no public-trust signing-provider approval'
     ExternalPublicationGates = @(
-        'Confirm public-release rights for every original source and artwork file',
+        'Confirm release rights for every original source and artwork file',
         'Assign public author/reviewer/release-approver identities',
         'Confirm maintainer MFA is enabled',
-        'Select and configure donation destinations',
-        'Complete the SignPath Foundation application and acceptance'
+        'Publish the reviewed release source and retain third-party notices',
+        'Obtain signing-provider approval including WebView2 packaging eligibility'
     )
 } | ConvertTo-Json -Depth 4

@@ -5,22 +5,20 @@ using OrbitNavigator.Contracts.Updates;
 
 namespace OrbitNavigator.Updates;
 
-public enum BetaUpdateLifecycle
+public enum PrimaryUpdateLifecycle
 {
-    Disabled = 0,
-    Idle = 1,
-    Checking = 2,
-    UpToDate = 3,
-    Available = 4,
-    Downloading = 5,
-    ReadyToInstall = 6,
-    LaunchingInstaller = 7,
-    Failed = 8,
+    Idle = 0,
+    Checking = 1,
+    UpToDate = 2,
+    Available = 3,
+    Downloading = 4,
+    ReadyToInstall = 5,
+    LaunchingInstaller = 6,
+    Failed = 7,
 }
 
-public sealed record BetaUpdateSnapshot(
-    BetaUpdateLifecycle Lifecycle,
-    bool IsBetaOptedIn,
+public sealed record PrimaryUpdateSnapshot(
+    PrimaryUpdateLifecycle Lifecycle,
     Version CurrentVersion,
     VerifiedUpdateManifest? AvailableManifest,
     StagedUpdatePackage? StagedPackage,
@@ -43,10 +41,10 @@ public interface IVisibleUpdateInstallerLauncher
         CancellationToken cancellationToken = default);
 }
 
-public sealed class BetaUpdateClient : IAsyncDisposable
+public sealed class PrimaryUpdateClient : IAsyncDisposable
 {
     public static readonly Uri ManifestUri =
-        new("https://orbit-nav-updater.snap-it.cc/beta/manifest.json");
+        new("https://orbit-nav-updater.snap-it.cc/primary/manifest.json");
     public static readonly Uri PackageOrigin =
         new("https://orbit-nav-updater.snap-it.cc/");
 
@@ -62,7 +60,7 @@ public sealed class BetaUpdateClient : IAsyncDisposable
     private UpdateClientState? _clientState;
     private bool _disposed;
 
-    public BetaUpdateClient(
+    public PrimaryUpdateClient(
         HttpClient httpClient,
         FileUpdateClientStateStore stateStore,
         UpdateManifestPublicKey trustedKey,
@@ -84,20 +82,19 @@ public sealed class BetaUpdateClient : IAsyncDisposable
         _currentVersion = currentVersion ?? throw new ArgumentNullException(nameof(currentVersion));
         _timeProvider = timeProvider ?? TimeProvider.System;
         Snapshot = new(
-            BetaUpdateLifecycle.Disabled,
-            false,
+            PrimaryUpdateLifecycle.Idle,
             currentVersion,
             null,
             null,
             null,
-            "Beta updates are off.",
+            "Orbit checks for signed updates automatically.",
             null,
             null);
     }
 
-    public BetaUpdateSnapshot Snapshot { get; private set; }
+    public PrimaryUpdateSnapshot Snapshot { get; private set; }
 
-    public event EventHandler<BetaUpdateSnapshot>? SnapshotChanged;
+    public event EventHandler<PrimaryUpdateSnapshot>? SnapshotChanged;
 
     public async ValueTask InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -106,15 +103,26 @@ public sealed class BetaUpdateClient : IAsyncDisposable
         {
             ThrowIfDisposed();
             _clientState = await _stateStore.LoadOrCreateAsync(cancellationToken).ConfigureAwait(false);
+            if (_clientState.Channel != UpdateReleaseChannel.Primary ||
+                _clientState.BetaChannelOptIn)
+            {
+                _clientState = _clientState.SelectChannel(
+                    UpdateReleaseChannel.Primary,
+                    explicitUserOptIn: false);
+            }
+            if (_clientState.NextCheckNotBeforeUtc is null)
+            {
+                _clientState = _clientState with
+                {
+                    NextCheckNotBeforeUtc = _timeProvider.GetUtcNow() +
+                        UpdateCheckSchedule.GetInitialDelay(_clientState),
+                };
+            }
+            await _stateStore.SaveAsync(_clientState, cancellationToken).ConfigureAwait(false);
             Publish(Snapshot with
             {
-                Lifecycle = _clientState.BetaChannelOptIn
-                    ? BetaUpdateLifecycle.Idle
-                    : BetaUpdateLifecycle.Disabled,
-                IsBetaOptedIn = _clientState.BetaChannelOptIn,
-                StatusMessage = _clientState.BetaChannelOptIn
-                    ? "Beta updates are enabled. Unsigned packages always require confirmation."
-                    : "Beta updates are off.",
+                Lifecycle = PrimaryUpdateLifecycle.Idle,
+                StatusMessage = "Orbit checks for signed updates automatically. Unsigned installers always require confirmation.",
                 NextCheckNotBeforeUtc = _clientState.NextCheckNotBeforeUtc,
             });
         }
@@ -124,47 +132,7 @@ public sealed class BetaUpdateClient : IAsyncDisposable
         }
     }
 
-    public async ValueTask<ControllerResult<BetaUpdateSnapshot>> SetBetaOptInAsync(
-        bool enabled,
-        CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            ThrowIfDisposed();
-            var state = await EnsureStateAsync(cancellationToken).ConfigureAwait(false);
-            state = state.SelectChannel(
-                enabled ? UpdateReleaseChannel.Beta : UpdateReleaseChannel.Primary,
-                explicitUserOptIn: enabled);
-            if (enabled && state.NextCheckNotBeforeUtc is null)
-                state = state with
-                {
-                    NextCheckNotBeforeUtc = _timeProvider.GetUtcNow() +
-                        UpdateCheckSchedule.GetInitialDelay(state),
-                };
-            await _stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
-            _clientState = state;
-            Publish(new(
-                enabled ? BetaUpdateLifecycle.Idle : BetaUpdateLifecycle.Disabled,
-                enabled,
-                _currentVersion,
-                null,
-                null,
-                null,
-                enabled
-                    ? "Beta updates are enabled. Unsigned packages always require confirmation."
-                    : "Beta updates are off. Primary automatic updates remain disabled.",
-                Snapshot.LastCheckedAtUtc,
-                state.NextCheckNotBeforeUtc));
-            return ControllerResult<BetaUpdateSnapshot>.Success(Snapshot);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
-    public ValueTask<ControllerResult<BetaUpdateSnapshot>> CheckAsync(
+    public ValueTask<ControllerResult<PrimaryUpdateSnapshot>> CheckAsync(
         CancellationToken cancellationToken = default) =>
         CheckCoreAsync(ignoreSchedule: true, cancellationToken);
 
@@ -175,8 +143,7 @@ public sealed class BetaUpdateClient : IAsyncDisposable
             try
             {
                 var state = _clientState;
-                if (state is { BetaChannelOptIn: true } &&
-                    state.NextCheckNotBeforeUtc is { } due &&
+                if (state?.NextCheckNotBeforeUtc is { } due &&
                     due <= _timeProvider.GetUtcNow())
                 {
                     await CheckCoreAsync(ignoreSchedule: false, cancellationToken).ConfigureAwait(false);
@@ -196,7 +163,7 @@ public sealed class BetaUpdateClient : IAsyncDisposable
         }
     }
 
-    public async ValueTask<ControllerResult<BetaUpdateSnapshot>> DownloadAsync(
+    public async ValueTask<ControllerResult<PrimaryUpdateSnapshot>> DownloadAsync(
         CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -204,13 +171,13 @@ public sealed class BetaUpdateClient : IAsyncDisposable
         {
             ThrowIfDisposed();
             var state = await EnsureStateAsync(cancellationToken).ConfigureAwait(false);
-            if (!state.BetaChannelOptIn || Snapshot.AvailableManifest is not { } manifest)
-                return Failure(ControllerErrorCode.PolicyDenied, "error.update.beta_not_available");
+            if (Snapshot.AvailableManifest is not { } manifest)
+                return Failure(ControllerErrorCode.PolicyDenied, "error.update.not_available");
 
             Publish(Snapshot with
             {
-                Lifecycle = BetaUpdateLifecycle.Downloading,
-                StatusMessage = "Downloading the verified Beta package...",
+                Lifecycle = PrimaryUpdateLifecycle.Downloading,
+                StatusMessage = "Downloading the verified Orbit Navigator update...",
             });
             Directory.CreateDirectory(_stagingRoot);
             var finalName = Path.GetFileName(manifest.Package.DownloadUri.AbsolutePath);
@@ -283,20 +250,20 @@ public sealed class BetaUpdateClient : IAsyncDisposable
                         cancellationToken).ConfigureAwait(false);
 
                 state = state.WithAcceptedReleaseSequence(
-                    UpdateReleaseChannel.Beta,
+                    UpdateReleaseChannel.Primary,
                     manifest.ReleaseSequence);
                 await _stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
                 _clientState = state;
                 Publish(Snapshot with
                 {
-                    Lifecycle = BetaUpdateLifecycle.ReadyToInstall,
+                    Lifecycle = PrimaryUpdateLifecycle.ReadyToInstall,
                     StagedPackage = staged,
                     PublisherTrust = publisherTrust,
                     StatusMessage = publisherTrust == UpdatePublisherTrust.Unsigned
-                        ? "Beta downloaded and verified. Its Windows publisher is unknown; installation requires a separate confirmation."
-                        : "Beta downloaded and verified. Installation requires your confirmation.",
+                        ? "Update downloaded and verified. Its Windows publisher is unknown; installation requires a separate confirmation."
+                        : "Update downloaded and verified. Installation requires your confirmation.",
                 });
-                return ControllerResult<BetaUpdateSnapshot>.Success(Snapshot);
+                return ControllerResult<PrimaryUpdateSnapshot>.Success(Snapshot);
             }
             finally
             {
@@ -328,8 +295,7 @@ public sealed class BetaUpdateClient : IAsyncDisposable
         try
         {
             ThrowIfDisposed();
-            if (!Snapshot.IsBetaOptedIn ||
-                Snapshot.StagedPackage is not { } staged ||
+            if (Snapshot.StagedPackage is not { } staged ||
                 Snapshot.PublisherTrust is not { } priorTrust)
                 return ControllerResult.Failure(ControllerError.Create(
                     ControllerErrorCode.Conflict,
@@ -344,7 +310,7 @@ public sealed class BetaUpdateClient : IAsyncDisposable
                     ControllerErrorCode.IntegrityFailure,
                     "error.update.publisher_changed"));
             var decision = UpdateApplyPolicy.Evaluate(
-                UpdateReleaseChannel.Beta,
+                UpdateReleaseChannel.Primary,
                 currentTrust,
                 UpdatePreference.NotifyOnly,
                 deliberatePerPackageConfirmation);
@@ -356,8 +322,8 @@ public sealed class BetaUpdateClient : IAsyncDisposable
 
             Publish(Snapshot with
             {
-                Lifecycle = BetaUpdateLifecycle.LaunchingInstaller,
-                StatusMessage = "Opening the visible Beta installer...",
+                Lifecycle = PrimaryUpdateLifecycle.LaunchingInstaller,
+                StatusMessage = "Opening the visible Orbit Navigator installer...",
             });
             var launched = await _installer.LaunchVisibleAsync(staged, cancellationToken)
                 .ConfigureAwait(false);
@@ -365,8 +331,8 @@ public sealed class BetaUpdateClient : IAsyncDisposable
             {
                 Publish(Snapshot with
                 {
-                    Lifecycle = BetaUpdateLifecycle.ReadyToInstall,
-                    StatusMessage = "The Beta installer could not be opened.",
+                    Lifecycle = PrimaryUpdateLifecycle.ReadyToInstall,
+                    StatusMessage = "The Orbit Navigator installer could not be opened.",
                 });
             }
             return launched;
@@ -377,7 +343,7 @@ public sealed class BetaUpdateClient : IAsyncDisposable
         }
     }
 
-    private async ValueTask<ControllerResult<BetaUpdateSnapshot>> CheckCoreAsync(
+    private async ValueTask<ControllerResult<PrimaryUpdateSnapshot>> CheckCoreAsync(
         bool ignoreSchedule,
         CancellationToken cancellationToken)
     {
@@ -386,23 +352,21 @@ public sealed class BetaUpdateClient : IAsyncDisposable
         {
             ThrowIfDisposed();
             var state = await EnsureStateAsync(cancellationToken).ConfigureAwait(false);
-            if (!state.BetaChannelOptIn)
-                return Failure(ControllerErrorCode.PolicyDenied, "error.update.beta_not_enabled");
             var now = _timeProvider.GetUtcNow();
             if (!ignoreSchedule && state.NextCheckNotBeforeUtc is { } due && due > now)
-                return ControllerResult<BetaUpdateSnapshot>.Success(Snapshot);
+                return ControllerResult<PrimaryUpdateSnapshot>.Success(Snapshot);
 
             Publish(Snapshot with
             {
-                Lifecycle = BetaUpdateLifecycle.Checking,
-                StatusMessage = "Checking the signed Beta update feed...",
+                Lifecycle = PrimaryUpdateLifecycle.Checking,
+                StatusMessage = "Checking the signed Orbit Navigator update feed...",
             });
             var policy = new UpdateFeedTrustPolicy(
                 ManifestUri,
                 PackageOrigin,
-                "beta",
+                "primary",
                 _currentVersion,
-                state.GetAcceptedReleaseSequence(UpdateReleaseChannel.Beta),
+                state.GetAcceptedReleaseSequence(UpdateReleaseChannel.Primary),
                 [_trustedKey]);
             var verifier = new SignedUpdateManifestVerifier(policy, _timeProvider);
             using var request = new HttpRequestMessage(HttpMethod.Get, ManifestUri);
@@ -410,7 +374,7 @@ public sealed class BetaUpdateClient : IAsyncDisposable
             request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
             UpdateConditionalRequest.ApplyEntityTag(
                 request,
-                state.GetEntityTag(UpdateReleaseChannel.Beta));
+                state.GetEntityTag(UpdateReleaseChannel.Primary));
             using var response = await _httpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
@@ -422,12 +386,12 @@ public sealed class BetaUpdateClient : IAsyncDisposable
                 _clientState = state;
                 Publish(Snapshot with
                 {
-                    Lifecycle = BetaUpdateLifecycle.UpToDate,
-                    StatusMessage = "No newer eligible Beta update is available.",
+                    Lifecycle = PrimaryUpdateLifecycle.UpToDate,
+                    StatusMessage = "Orbit Navigator is up to date.",
                     LastCheckedAtUtc = now,
                     NextCheckNotBeforeUtc = state.NextCheckNotBeforeUtc,
                 });
-                return ControllerResult<BetaUpdateSnapshot>.Success(Snapshot);
+                return ControllerResult<PrimaryUpdateSnapshot>.Success(Snapshot);
             }
             if (response.StatusCode != HttpStatusCode.OK ||
                 response.Content.Headers.ContentLength is < 1 or > UpdateFeedTrustPolicy.DefaultMaximumManifestBytes)
@@ -459,7 +423,7 @@ public sealed class BetaUpdateClient : IAsyncDisposable
                     cancellationToken).ConfigureAwait(false);
             var rollout = UpdateRolloutGate.Evaluate(verified.Value!, state, now);
             state = state.WithEntityTag(
-                UpdateReleaseChannel.Beta,
+                UpdateReleaseChannel.Primary,
                 UpdateConditionalRequest.ReadEntityTag(response));
             state = SuccessfulCheckState(state, now);
             await _stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
@@ -467,18 +431,18 @@ public sealed class BetaUpdateClient : IAsyncDisposable
             Publish(Snapshot with
             {
                 Lifecycle = rollout.IsEligible
-                    ? BetaUpdateLifecycle.Available
-                    : BetaUpdateLifecycle.UpToDate,
+                    ? PrimaryUpdateLifecycle.Available
+                    : PrimaryUpdateLifecycle.UpToDate,
                 AvailableManifest = rollout.IsEligible ? verified.Value : null,
                 StagedPackage = null,
                 PublisherTrust = null,
                 StatusMessage = rollout.IsEligible
-                    ? $"Orbit Navigator Beta {verified.Value!.Package.Version} is available."
-                    : "This Beta release has not reached this installation's privacy-preserving rollout bucket yet.",
+                    ? $"Orbit Navigator {verified.Value!.Package.Version} is available."
+                    : "This update has not reached this installation's privacy-preserving rollout bucket yet.",
                 LastCheckedAtUtc = now,
                 NextCheckNotBeforeUtc = rollout.ReevaluateAtUtc ?? state.NextCheckNotBeforeUtc,
             });
-            return ControllerResult<BetaUpdateSnapshot>.Success(Snapshot);
+            return ControllerResult<PrimaryUpdateSnapshot>.Success(Snapshot);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -517,10 +481,10 @@ public sealed class BetaUpdateClient : IAsyncDisposable
             ConsecutiveFailures = 0,
             NextCheckNotBeforeUtc = now + UpdateCheckSchedule.GetRegularDelay(
                 state,
-                Math.Max(1, state.BetaAcceptedReleaseSequence + 1)),
+                Math.Max(1, state.PrimaryAcceptedReleaseSequence + 1)),
         };
 
-    private async ValueTask<ControllerResult<BetaUpdateSnapshot>> RecordFailureAsync(
+    private async ValueTask<ControllerResult<PrimaryUpdateSnapshot>> RecordFailureAsync(
         ControllerErrorCode code,
         string messageKey,
         CancellationToken cancellationToken)
@@ -537,20 +501,20 @@ public sealed class BetaUpdateClient : IAsyncDisposable
         _clientState = state;
         Publish(Snapshot with
         {
-            Lifecycle = BetaUpdateLifecycle.Failed,
-            StatusMessage = "The Beta update service is unavailable or returned data that could not be verified. Local browsing is unaffected.",
+            Lifecycle = PrimaryUpdateLifecycle.Failed,
+            StatusMessage = "The update service is unavailable or returned data that could not be verified. Local browsing is unaffected.",
             LastCheckedAtUtc = _timeProvider.GetUtcNow(),
             NextCheckNotBeforeUtc = state.NextCheckNotBeforeUtc,
         });
         return Failure(code, messageKey);
     }
 
-    private ControllerResult<BetaUpdateSnapshot> Failure(
+    private ControllerResult<PrimaryUpdateSnapshot> Failure(
         ControllerErrorCode code,
         string messageKey) =>
-        ControllerResult<BetaUpdateSnapshot>.Failure(ControllerError.Create(code, messageKey));
+        ControllerResult<PrimaryUpdateSnapshot>.Failure(ControllerError.Create(code, messageKey));
 
-    private void Publish(BetaUpdateSnapshot snapshot)
+    private void Publish(PrimaryUpdateSnapshot snapshot)
     {
         Snapshot = snapshot;
         SnapshotChanged?.Invoke(this, snapshot);

@@ -38,12 +38,14 @@ system browser and a narrowly scoped authorization flow. Orbit does not ask
 for or receive the user's My Orbit password or browser cookies. Full browsing
 data sync is disabled in the current application composition.
 
-Beta update checks occur only after explicit Beta opt-in. The client requests
-a signed manifest and, after another user action, a selected installer from
-the pinned Orbit update host. A random rollout seed remains local and is not
-sent to the feed. Requests may use a shared HTTP ETag and ordinary connection
-metadata required by the network; Orbit adds no install identifier or
-browser-usage telemetry.
+Primary update checks run automatically after a randomized local delay and
+then on a bounded retry schedule. The client requests a signed manifest and
+downloads an installer only after an explicit user action. Launching an
+unsigned installer always requires a separate confirmation and may show the
+Windows unknown-publisher warning. A random rollout seed remains local and is
+not sent to the feed. Requests may use a shared HTTP ETag and ordinary
+connection metadata required by the network; Orbit adds no install identifier
+or browser-usage telemetry.
 
 ## Bug reports and contributions
 

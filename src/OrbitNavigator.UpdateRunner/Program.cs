@@ -61,7 +61,7 @@ internal static class Program
                 FileName = packagePath,
                 UseShellExecute = true,
                 WorkingDirectory = Path.GetDirectoryName(packagePath)!,
-                // Unsigned Beta packages must always retain the visible Windows and
+                // Unsigned packages must always retain the visible Windows and
                 // Setup trust surfaces. No silent installer arguments are permitted.
             });
             return 0;

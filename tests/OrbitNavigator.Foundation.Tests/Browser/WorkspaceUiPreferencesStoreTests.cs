@@ -28,7 +28,8 @@ public sealed class WorkspaceUiPreferencesStoreTests
             WorkspacePreviewMode.Click,
             WorkspaceAffiliatedRailPlacement.Right,
             false,
-            312));
+            312,
+            false));
         var reloaded = await new WorkspaceUiPreferencesStore(storage).LoadAsync(context);
         var stale = await store.SaveAsync(new(
             context,
@@ -49,6 +50,7 @@ public sealed class WorkspaceUiPreferencesStoreTests
         Assert.Equal(WorkspaceAffiliatedRailPlacement.Right, reloaded.Value.AffiliatedRailPlacement);
         Assert.False(reloaded.Value.ShowAffiliatedRail);
         Assert.Equal(312, reloaded.Value.SideTabPanelWidth);
+        Assert.False(reloaded.Value.ShowAddressBar);
         Assert.False(stale.IsSuccess);
         Assert.Equal(ControllerErrorCode.Conflict, stale.Error?.Code);
     }
@@ -69,7 +71,8 @@ public sealed class WorkspaceUiPreferencesStoreTests
             true,
             true,
             true,
-            SideTabPanelWidth: 288));
+            SideTabPanelWidth: 288,
+            ShowAddressBar: false));
 
         var privateRead = await store.LoadAsync(privateContext);
         var privateWrite = await store.SaveAsync(new(
@@ -91,6 +94,8 @@ public sealed class WorkspaceUiPreferencesStoreTests
         Assert.True(normalRead.Value.CompactTabs);
         Assert.Equal(288, privateRead.Value.SideTabPanelWidth);
         Assert.Equal(288, normalRead.Value.SideTabPanelWidth);
+        Assert.False(privateRead.Value.ShowAddressBar);
+        Assert.False(normalRead.Value.ShowAddressBar);
         Assert.Equal(saved.Value!.Revision, normalRead.Value.Revision);
     }
 

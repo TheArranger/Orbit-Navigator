@@ -47,6 +47,23 @@ public sealed class FoundationToolWindowCompositionTests
         owner.Close();
     });
 
+    [Fact]
+    public void ShowOrActivateRestoresMinimizedDetachedController() => RunSta(() =>
+    {
+        var owner = CreateOwner();
+        var tabs = new TabControllerControl(TabControllerSurfaceKind.Detached);
+        var tool = new FoundationTabControllerWindow(owner, tabs, bounds: null);
+        tool.Show();
+        tool.WindowState = WindowState.Minimized;
+
+        tool.ShowOrActivate(focusSelected: false);
+
+        Assert.True(tool.IsVisible);
+        Assert.Equal(WindowState.Normal, tool.WindowState);
+        tool.CloseForOwner();
+        owner.Close();
+    });
+
     private static Window CreateOwner()
     {
         var owner = new Window

@@ -32,7 +32,7 @@ public partial class App : Application
     private MyOrbitAccountSettingsAdapter? _myOrbitAccountSettings;
     private readonly CancellationTokenSource _myOrbitAccountLifetime = new();
     private readonly CancellationTokenSource _updateLifetime = new();
-    private BetaUpdateClient? _betaUpdates;
+    private PrimaryUpdateClient? _updates;
     private Task? _updateScheduler;
     private LocalDataRootInstanceLease? _instanceLease;
 
@@ -90,6 +90,7 @@ public partial class App : Application
         var clock = new SystemClock();
         var bookmarks = new BookmarksFacade(profileStorage, clock);
         var history = new HistoryFacade(profileStorage);
+        var downloads = new DownloadsFacade(profileStorage, clock);
         var settings = new BrowserSettingsFacade(profileStorage);
         var workspacePreferences = new WorkspaceUiPreferencesStore(profileStorage);
         var affiliatedSitesVisibility = new AffiliatedSitesVisibilityStore(profileStorage);
@@ -116,16 +117,16 @@ public partial class App : Application
             _myOrbitAccount,
             clock,
             _myOrbitAccountLifetime.Token);
-        _betaUpdates = new BetaUpdateClient(
+        _updates = new PrimaryUpdateClient(
             HttpSignedUpdateManifestSource.CreatePrivacyPreservingClient(TimeSpan.FromSeconds(45)),
             new FileUpdateClientStateStore(Path.Combine(paths.UpdatesRoot, "client-state.json")),
-            BetaUpdateTrust.ManifestKey,
+            PrimaryUpdateTrust.ManifestKey,
             new WindowsAuthenticodeTrustInspector(),
             new VisibleUpdateInstallerLauncher(),
             Path.Combine(paths.UpdatesRoot, "staging"),
             typeof(App).Assembly.GetName().Version ?? new Version(0, 0));
-        await _betaUpdates.InitializeAsync(_updateLifetime.Token);
-        _updateScheduler = _betaUpdates.RunScheduledChecksAsync(_updateLifetime.Token);
+        await _updates.InitializeAsync(_updateLifetime.Token);
+        _updateScheduler = _updates.RunScheduledChecksAsync(_updateLifetime.Token);
         var lifecycle = new WebViewProfileLifecycle(paths.WebViewRoot);
         var privateWindows = new LocalPrivateWindowLifecycle(lifecycle);
 
@@ -142,7 +143,9 @@ public partial class App : Application
                 new HostNavigationGuard(new SiteProtectionNavigationPolicy(protection)),
                 permissions,
                 completions,
-                _diagnostics);
+                _diagnostics,
+                downloads,
+                settings);
             return new PreparedWebViewHost(host, lease.Value!);
         }
 
@@ -248,6 +251,7 @@ public partial class App : Application
                 ux.CreateClipboardShelf(localPrivacy.ClipboardShelf),
                 bookmarks,
                 history,
+                downloads,
                 settings,
                 workspacePreferences,
                 affiliatedSitesVisibility,
@@ -256,7 +260,7 @@ public partial class App : Application
                 offlineReading,
                 localPrivacy,
                 _myOrbitAccountSettings,
-                _betaUpdates,
+                _updates,
                 optionalSync,
                 AppContext.BaseDirectory,
                 () => RestartApplication(e.Args),
@@ -373,10 +377,10 @@ public partial class App : Application
                 exception.InnerExceptions.All(inner => inner is OperationCanceledException)) { }
             _updateScheduler = null;
         }
-        if (_betaUpdates is not null)
+        if (_updates is not null)
         {
-            _betaUpdates.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            _betaUpdates = null;
+            _updates.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            _updates = null;
         }
         _myOrbitAccountLifetime.Cancel();
         if (_myOrbitAccount is IAsyncDisposable asyncDisposable)

@@ -43,9 +43,12 @@ public sealed class FoundationWindow : Window
     private readonly BrowserChromeControl _chrome = new();
     private readonly StartupLoadingOverlay _startupLoading = new();
     private readonly Grid _webSurface = new();
+    private readonly WindowFullscreenController _fullscreen;
     private readonly NewTabPageControl _newTabPage = new();
     private readonly IBrowserWorkspaceAuditSink? _workspaceAudit;
     private readonly Dictionary<BrowserTabId, WebView2HostControl> _hosts = [];
+    private readonly Dictionary<BrowserTabId, FoundationSettingsControl> _settingsTabs = [];
+    private readonly Dictionary<BrowserTabId, Uri> _lastRecordedHistoryAddresses = [];
     private readonly BrowserWorkspaceCoordinator _workspaceCoordinator;
     private readonly BrowserWorkspaceSessionSnapshot? _restoredSession;
     private readonly ITabControllerLayoutStore _tabControllerLayouts;
@@ -60,6 +63,7 @@ public sealed class FoundationWindow : Window
     private readonly ClipboardShelfPresenter _clipboardShelf;
     private readonly IBookmarksFacade _bookmarks;
     private readonly IHistoryFacade _history;
+    private readonly IDownloadsFacade _downloads;
     private readonly IBrowserSettingsFacade _settings;
     private readonly IWorkspaceUiPreferencesStore _workspacePreferences;
     private readonly IAffiliatedSitesVisibilityStore _affiliatedSitesVisibility;
@@ -67,7 +71,7 @@ public sealed class FoundationWindow : Window
     private readonly IWorkspaceArtworkStore _workspaceArtwork;
     private readonly IOfflineReadingStore _offlineReading;
     private readonly MyOrbitAccountSettingsAdapter _myOrbitAccountSettings;
-    private readonly BetaUpdateClient _betaUpdates;
+    private readonly PrimaryUpdateClient _updates;
     private readonly Action _retryStartup;
     private readonly TabControllerPresentationSession _tabControllerSession;
     private readonly BrowserResourceSampler _resourceSampler;
@@ -117,6 +121,7 @@ public sealed class FoundationWindow : Window
         ClipboardShelfPresenter clipboardShelf,
         IBookmarksFacade bookmarks,
         IHistoryFacade history,
+        IDownloadsFacade downloads,
         IBrowserSettingsFacade settings,
         IWorkspaceUiPreferencesStore workspacePreferences,
         IAffiliatedSitesVisibilityStore affiliatedSitesVisibility,
@@ -125,12 +130,14 @@ public sealed class FoundationWindow : Window
         IOfflineReadingStore offlineReading,
         LocalPrivacyComposition localPrivacy,
         MyOrbitAccountSettingsAdapter myOrbitAccountSettings,
-        BetaUpdateClient betaUpdates,
+        PrimaryUpdateClient updates,
         OptionalSyncComposition optionalSync,
         string payloadRoot,
         Action retryStartup,
         IBrowserWorkspaceAuditSink? workspaceAudit = null)
     {
+        _fullscreen = new(this, _chrome.ApplyFullscreen);
+        _chrome.FullscreenExitRequested += OnFullscreenExitRequested;
         _initialHost = initialHost ?? throw new ArgumentNullException(nameof(initialHost));
         Ux = ux ?? throw new ArgumentNullException(nameof(ux));
         PrivacyPersistence = privacyPersistence ?? throw new ArgumentNullException(nameof(privacyPersistence));
@@ -146,6 +153,7 @@ public sealed class FoundationWindow : Window
         _clipboardShelf = clipboardShelf ?? throw new ArgumentNullException(nameof(clipboardShelf));
         _bookmarks = bookmarks ?? throw new ArgumentNullException(nameof(bookmarks));
         _history = history ?? throw new ArgumentNullException(nameof(history));
+        _downloads = downloads ?? throw new ArgumentNullException(nameof(downloads));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _workspacePreferences = workspacePreferences ?? throw new ArgumentNullException(nameof(workspacePreferences));
         _affiliatedSitesVisibility = affiliatedSitesVisibility ?? throw new ArgumentNullException(nameof(affiliatedSitesVisibility));
@@ -154,7 +162,7 @@ public sealed class FoundationWindow : Window
         _offlineReading = offlineReading ?? throw new ArgumentNullException(nameof(offlineReading));
         LocalPrivacy = localPrivacy ?? throw new ArgumentNullException(nameof(localPrivacy));
         _myOrbitAccountSettings = myOrbitAccountSettings ?? throw new ArgumentNullException(nameof(myOrbitAccountSettings));
-        _betaUpdates = betaUpdates ?? throw new ArgumentNullException(nameof(betaUpdates));
+        _updates = updates ?? throw new ArgumentNullException(nameof(updates));
         OptionalSync = optionalSync ?? throw new ArgumentNullException(nameof(optionalSync));
         ArgumentException.ThrowIfNullOrWhiteSpace(payloadRoot);
         _retryStartup = retryStartup ?? throw new ArgumentNullException(nameof(retryStartup));
@@ -362,14 +370,34 @@ public sealed class FoundationWindow : Window
             case MoveTabBrowserCommand move:
                 await MoveTabAsync(move.TabId, move.NewIndex, move.GroupId);
                 break;
-            case NavigateBrowserCommand navigate when _hosts.TryGetValue(navigate.TabId, out var navigateHost):
+            case NavigateBrowserCommand navigate:
                 var canonicalTarget = CanonicalWebAddress.Normalize(navigate.Target);
-                if ((await navigateHost.NavigateAsync(canonicalTarget)).IsSuccess)
+                if (_hosts.TryGetValue(navigate.TabId, out var navigateHost))
                 {
-                    await UpdateTabAsync(navigate.TabId, tab => tab with { Address = canonicalTarget, Title = canonicalTarget.Host, LoadState = BrowserLoadState.Loading });
+                    if ((await navigateHost.NavigateAsync(canonicalTarget)).IsSuccess)
+                    {
+                        await UpdateTabAsync(navigate.TabId, tab => tab with
+                        {
+                            Address = canonicalTarget,
+                            Title = canonicalTarget.Host,
+                            LoadState = BrowserLoadState.Loading,
+                            InternalPage = BrowserInternalPageKind.None,
+                        });
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    navigateHost = await NavigateInternalTabToWebAsync(navigate.TabId, canonicalTarget);
+                    if (navigateHost is null) break;
+                }
+                if (navigateHost is not null)
+                {
                     ShowSelectedHost();
                     await LoadProtectionAsync(navigateHost);
-                    await RecordHistoryAsync(navigateHost.Context, canonicalTarget, canonicalTarget.Host);
                 }
                 break;
             case GoBackBrowserCommand back when _hosts.TryGetValue(back.TabId, out var backHost):
@@ -380,6 +408,12 @@ public sealed class FoundationWindow : Window
                 break;
             case ReloadBrowserCommand reload when _hosts.TryGetValue(reload.TabId, out var reloadHost):
                 await reloadHost.ReloadAsync();
+                break;
+            case ReloadBrowserCommand reload when _settingsTabs.ContainsKey(reload.TabId):
+                await ReloadSettingsTabAsync(reload.TabId);
+                break;
+            case StopBrowserCommand stop when _hosts.TryGetValue(stop.TabId, out var stopHost):
+                await stopHost.StopAsync();
                 break;
         }
     }
@@ -405,7 +439,6 @@ public sealed class FoundationWindow : Window
             });
             ShowSelectedHost();
             await LoadProtectionAsync(host);
-            await RecordHistoryAsync(host.Context, target, target.Host);
         }
     }
 
@@ -496,7 +529,8 @@ public sealed class FoundationWindow : Window
             ToFoundationPreviewMode(args.Preferences.WorkspacePreviewReveal),
             ToFoundationRailPlacement(args.Preferences.AffiliatedRailPlacement),
             args.Preferences.ShowAffiliatedRail,
-            args.Preferences.SideTabPanelWidth));
+            args.Preferences.SideTabPanelWidth,
+            args.Preferences.ShowAddressBar));
         if (save.IsSuccess)
         {
             ApplyWorkspacePreferences(save.Value!);
@@ -533,7 +567,8 @@ public sealed class FoundationWindow : Window
             ToFoundationPreviewMode(current.WorkspacePreviewReveal),
             ToFoundationRailPlacement(current.AffiliatedRailPlacement),
             current.ShowAffiliatedRail,
-            current.SideTabPanelWidth));
+            current.SideTabPanelWidth,
+            current.ShowAddressBar));
         if (save.IsSuccess)
         {
             ApplyWorkspacePreferences(save.Value!);
@@ -779,7 +814,7 @@ public sealed class FoundationWindow : Window
 
     private async Task CreateTabAsync(CreateTabBrowserCommand command)
     {
-        if (command.TabId.IsEmpty || _hosts.ContainsKey(command.TabId)) return;
+        if (command.TabId.IsEmpty || TabExists(command.TabId)) return;
         var context = new BrowsingContext(_privacy, _windowId, command.TabId, null);
         var prepared = await _prepareHost(context);
         if (prepared is null) return;
@@ -826,7 +861,6 @@ public sealed class FoundationWindow : Window
                     LoadState = BrowserLoadState.Loading,
                 });
                 await LoadProtectionAsync(host);
-                await RecordHistoryAsync(host.Context, initialTarget, initialTarget.Host);
             }
         }
         ShowSelectedHost();
@@ -834,23 +868,27 @@ public sealed class FoundationWindow : Window
 
     private async Task CloseTabAsync(BrowserTabId tabId)
     {
-        if (!_hosts.TryGetValue(tabId, out var host) || _hosts.Count == 1) return;
+        if (!_browserState.Tabs.Any(tab => tab.TabId == tabId) || _browserState.Tabs.Count == 1) return;
         var result = await _workspaceCoordinator.ExecuteAsync(new CloseWorkspaceTabsAction(
             _windowId,
             _workspaceCoordinator.Current.Revision,
             [tabId]));
         if (!result.IsSuccess) return;
-        _hosts.Remove(tabId);
-        DetachHost(host);
-        _webSurface.Children.Remove(host);
-        await host.DisposeAsync();
+        if (_hosts.Remove(tabId, out var host))
+        {
+            _lastRecordedHistoryAddresses.Remove(tabId);
+            DetachHost(host);
+            _webSurface.Children.Remove(host);
+            await host.DisposeAsync();
+        }
+        RemoveSettingsTab(tabId);
         ApplyWorkspaceSnapshot(result.Value!.Snapshot);
         ShowSelectedHost();
     }
 
     private async Task SelectTabAsync(BrowserTabId tabId)
     {
-        if (!_hosts.ContainsKey(tabId)) return;
+        if (!_browserState.Tabs.Any(tab => tab.TabId == tabId)) return;
         var result = await _workspaceCoordinator.ExecuteAsync(new SelectWorkspaceTabAction(
             _windowId,
             _workspaceCoordinator.Current.Revision,
@@ -858,7 +896,17 @@ public sealed class FoundationWindow : Window
         if (!result.IsSuccess) return;
         ApplyWorkspaceSnapshot(result.Value!.Snapshot);
         ShowSelectedHost();
-        _ = LoadProtectionAsync(_hosts[tabId]);
+        if (_hosts.TryGetValue(tabId, out var host)) _ = LoadProtectionAsync(host);
+    }
+
+    private bool TabExists(BrowserTabId tabId) =>
+        _browserState.Tabs.Any(tab => tab.TabId == tabId);
+
+    private void RemoveSettingsTab(BrowserTabId tabId)
+    {
+        if (!_settingsTabs.Remove(tabId, out var settings)) return;
+        _webSurface.Children.Remove(settings);
+        settings.Dispose();
     }
 
     private async Task MoveTabAsync(BrowserTabId tabId, int newIndex, BrowserTabGroupId? groupId)
@@ -924,6 +972,7 @@ public sealed class FoundationWindow : Window
                 await ShowClipboardShelfAsync();
                 return;
             case UtilityDrawerKind.Downloads:
+                await ShowDownloadsAsync();
                 return;
         }
 
@@ -954,8 +1003,8 @@ public sealed class FoundationWindow : Window
             string.Empty);
         _chrome.SetUtilitySurfaceAvailability(
             UtilityDrawerKind.Downloads,
-            false,
-            "Download tracking is not available in this build.");
+            true,
+            string.Empty);
         _chrome.SetUtilitySurfaceAvailability(
             UtilityDrawerKind.ClipboardShelf,
             true,
@@ -1051,10 +1100,11 @@ public sealed class FoundationWindow : Window
         var window = new FoundationUtilityWindow(
             _privacy,
             _history,
+            _downloads,
             _settings,
             _clipboardShelf,
             _myOrbitAccountSettings,
-            _betaUpdates,
+            _updates,
             GetSelectedBrowsingContext,
             OpenUtilityTargetAsync)
         {
@@ -1075,10 +1125,11 @@ public sealed class FoundationWindow : Window
         var window = new FoundationUtilityWindow(
             _privacy,
             _history,
+            _downloads,
             _settings,
             _clipboardShelf,
             _myOrbitAccountSettings,
-            _betaUpdates,
+            _updates,
             GetSelectedBrowsingContext,
             OpenUtilityTargetAsync)
         {
@@ -1088,23 +1139,131 @@ public sealed class FoundationWindow : Window
         window.Show();
     }
 
-    private async Task ShowSettingsAsync()
+    private async Task ShowDownloadsAsync()
     {
         var window = new FoundationUtilityWindow(
             _privacy,
             _history,
+            _downloads,
             _settings,
             _clipboardShelf,
             _myOrbitAccountSettings,
-            _betaUpdates,
+            _updates,
             GetSelectedBrowsingContext,
             OpenUtilityTargetAsync)
         {
             Owner = this,
         };
-        var initialization = window.ShowSettingsAsync();
+        await window.ShowDownloadsAsync();
         window.Show();
-        await initialization;
+    }
+
+    private async Task ShowSettingsAsync()
+    {
+        var existing = InternalPageTabRoute.FindOpenTab(
+            _browserState,
+            BrowserInternalPageKind.Settings);
+        if (existing is { } existingTabId)
+        {
+            await SelectTabAsync(existingTabId);
+            return;
+        }
+
+        var tabId = new BrowserTabId(Guid.NewGuid());
+        var added = await _workspaceCoordinator.ExecuteAsync(new AddWorkspaceTabAction(
+            _windowId,
+            _workspaceCoordinator.Current.Revision,
+            NewTab(tabId, _privacy.IsPrivate) with
+            {
+                Title = "Settings",
+                InternalPage = BrowserInternalPageKind.Settings,
+            },
+            Select: true));
+        if (!added.IsSuccess) return;
+
+        var settings = CreateSettingsTab(tabId);
+        _settingsTabs.Add(tabId, settings);
+        _webSurface.Children.Add(settings);
+        ApplyWorkspaceSnapshot(added.Value!.Snapshot);
+        ShowSelectedHost();
+        await settings.InitializeAsync(_windowLifetime.Token);
+    }
+
+    private FoundationSettingsControl CreateSettingsTab(BrowserTabId tabId) => new(
+        _privacy,
+        _settings,
+        _myOrbitAccountSettings,
+        _updates,
+        () => new BrowsingContext(_privacy, _windowId, tabId, null));
+
+    private async Task ReloadSettingsTabAsync(BrowserTabId tabId)
+    {
+        if (!_settingsTabs.Remove(tabId, out var previous)) return;
+        _webSurface.Children.Remove(previous);
+        previous.Dispose();
+        var replacement = CreateSettingsTab(tabId);
+        _settingsTabs.Add(tabId, replacement);
+        _webSurface.Children.Add(replacement);
+        ShowSelectedHost();
+        await replacement.InitializeAsync(_windowLifetime.Token);
+    }
+
+    private async Task<WebView2HostControl?> NavigateInternalTabToWebAsync(
+        BrowserTabId tabId,
+        Uri target)
+    {
+        var tab = _browserState.Tabs.FirstOrDefault(candidate => candidate.TabId == tabId);
+        if (tab is null || tab.InternalPage == BrowserInternalPageKind.None ||
+            !_settingsTabs.ContainsKey(tabId))
+            return null;
+
+        var context = new BrowsingContext(
+            _privacy,
+            _windowId,
+            tabId,
+            SiteIdentity.TryCreate(target, out var site) ? site : null);
+        var prepared = await _prepareHost(context);
+        if (prepared is null) return null;
+        var host = prepared.Host;
+        AttachHost(host);
+        _webSurface.Children.Add(host);
+        var initialized = await prepared.InitializeAttachedAsync(
+            TimeSpan.FromSeconds(20),
+            _windowLifetime.Token);
+        if (!initialized.IsSuccess || !(await host.NavigateAsync(target)).IsSuccess)
+        {
+            DetachHost(host);
+            _webSurface.Children.Remove(host);
+            await prepared.DisposeAsync();
+            return null;
+        }
+
+        var updated = await _workspaceCoordinator.ExecuteAsync(new UpdateWorkspaceTabAction(
+            _windowId,
+            _workspaceCoordinator.Current.Revision,
+            tab with
+            {
+                Address = target,
+                Title = target.Host,
+                LoadState = BrowserLoadState.Loading,
+                InternalPage = BrowserInternalPageKind.None,
+            }));
+        if (!updated.IsSuccess)
+        {
+            DetachHost(host);
+            _webSurface.Children.Remove(host);
+            await host.DisposeAsync();
+            return null;
+        }
+
+        _hosts.Add(tabId, host);
+        if (_settingsTabs.Remove(tabId, out var settings))
+        {
+            _webSurface.Children.Remove(settings);
+            settings.Dispose();
+        }
+        ApplyWorkspaceSnapshot(updated.Value!.Snapshot);
+        return host;
     }
 
     private Task OpenUtilityTargetAsync(Uri target) => NavigateSelectedTabAsync(target, target.Host);
@@ -1116,24 +1275,29 @@ public sealed class FoundationWindow : Window
 
     private async Task NavigateSelectedTabAsync(Uri target, string title)
     {
-        if (_browserState.SelectedTabId is not { } selectedTabId ||
-            !_hosts.TryGetValue(selectedTabId, out var host))
+        if (_browserState.SelectedTabId is not { } selectedTabId)
         {
             return;
         }
         target = CanonicalWebAddress.Normalize(target);
-        if ((await host.NavigateAsync(target)).IsSuccess)
+        if (!_hosts.TryGetValue(selectedTabId, out var host))
+        {
+            host = await NavigateInternalTabToWebAsync(selectedTabId, target);
+            if (host is null) return;
+        }
+        else if ((await host.NavigateAsync(target)).IsSuccess)
         {
             await UpdateTabAsync(selectedTabId, tab => tab with
             {
                 Address = target,
                 Title = title,
                 LoadState = BrowserLoadState.Loading,
+                InternalPage = BrowserInternalPageKind.None,
             });
-            ShowSelectedHost();
-            await LoadProtectionAsync(host);
-            await RecordHistoryAsync(host.Context, target, title);
         }
+        else return;
+        ShowSelectedHost();
+        await LoadProtectionAsync(host);
     }
 
     private async Task RecordHistoryAsync(BrowsingContext context, Uri target, string title)
@@ -1308,14 +1472,71 @@ public sealed class FoundationWindow : Window
 
     private void AttachHost(WebView2HostControl host)
     {
+        host.FullscreenChanged += OnHostFullscreenChanged;
+        host.NewTabRequested += OnHostNewTabRequested;
+        host.NavigationCompleted += OnHostNavigationCompleted;
         host.TabVisualStateChanged += OnHostTabVisualStateChanged;
         host.TabAudioStateChanged += OnHostTabAudioStateChanged;
     }
 
     private void DetachHost(WebView2HostControl host)
     {
+        if (ReferenceEquals(_fullscreen.Owner, host)) ExitFullscreen();
+        host.FullscreenChanged -= OnHostFullscreenChanged;
+        host.NewTabRequested -= OnHostNewTabRequested;
+        host.NavigationCompleted -= OnHostNavigationCompleted;
         host.TabVisualStateChanged -= OnHostTabVisualStateChanged;
         host.TabAudioStateChanged -= OnHostTabAudioStateChanged;
+    }
+
+    private void OnHostFullscreenChanged(object? sender, WebViewFullscreenChangedEventArgs args)
+    {
+        if (sender is not WebView2HostControl host) return;
+        var selected = ReferenceEquals(SelectedHost(), host) && host.Visibility == Visibility.Visible;
+        _fullscreen.Update(host, selected, args.IsFullscreen);
+        if (args.IsFullscreen && !selected) _ = host.ExitFullscreenAsync();
+    }
+
+    private void OnFullscreenExitRequested(object? sender, EventArgs args) => ExitFullscreen();
+
+    private async void OnHostNewTabRequested(object? sender, WebViewNewTabRequestedEventArgs args)
+    {
+        if (sender is not WebView2HostControl source ||
+            !_hosts.TryGetValue(source.Context.TabId, out var current) ||
+            !ReferenceEquals(source, current))
+        {
+            return;
+        }
+
+        await CreateTabAsync(new CreateTabBrowserCommand(
+            _windowId,
+            new BrowserTabId(Guid.NewGuid()),
+            args.Target,
+            null));
+    }
+
+    private async void OnHostNavigationCompleted(
+        object? sender,
+        WebViewNavigationCompletedEventArgs args)
+    {
+        if (sender is not WebView2HostControl host ||
+            !_hosts.TryGetValue(args.TabId, out var current) ||
+            !ReferenceEquals(host, current) ||
+            (_lastRecordedHistoryAddresses.TryGetValue(args.TabId, out var previous) &&
+                previous == args.Address))
+        {
+            return;
+        }
+
+        _lastRecordedHistoryAddresses[args.TabId] = args.Address;
+        await RecordHistoryAsync(host.Context, args.Address, args.Title);
+    }
+
+    private void ExitFullscreen()
+    {
+        var owner = _fullscreen.Owner as WebView2HostControl;
+        _fullscreen.Exit();
+        if (owner is not null) _ = owner.ExitFullscreenAsync();
     }
 
     private void OnHostTabAudioStateChanged(
@@ -1495,6 +1716,7 @@ public sealed class FoundationWindow : Window
                 ? AffiliatedRailPlacement.Right : AffiliatedRailPlacement.Left,
             ShowAffiliatedRail = snapshot.ShowAffiliatedRail,
             SideTabPanelWidth = snapshot.SideTabPanelWidth,
+            ShowAddressBar = snapshot.ShowAddressBar,
         };
 
     private static WorkspaceNewTabMode ToFoundationNewTabMode(NewTabVisualMode value) =>
@@ -2062,6 +2284,7 @@ public sealed class FoundationWindow : Window
             }
             _quickViewHost = _quickViewPrepared.Host;
             _quickViewHost.TabVisualStateChanged += OnQuickViewHostVisualStateChanged;
+            _quickViewHost.NewTabRequested += OnQuickViewNewTabRequested;
             StageQuickViewHostForInitialization(_quickViewHost);
             await Dispatcher.Yield(DispatcherPriority.Loaded);
             var initialized = await _quickViewPrepared.InitializeAttachedAsync(
@@ -2116,6 +2339,7 @@ public sealed class FoundationWindow : Window
         {
             _webSurface.Children.Remove(_quickViewHost);
             _quickViewHost.TabVisualStateChanged -= OnQuickViewHostVisualStateChanged;
+            _quickViewHost.NewTabRequested -= OnQuickViewNewTabRequested;
             _quickViewHost = null;
         }
         if (_quickViewPrepared is not null)
@@ -2135,6 +2359,7 @@ public sealed class FoundationWindow : Window
         {
             _webSurface.Children.Remove(_quickViewHost);
             _quickViewHost.TabVisualStateChanged -= OnQuickViewHostVisualStateChanged;
+            _quickViewHost.NewTabRequested -= OnQuickViewNewTabRequested;
             _quickViewHost = null;
         }
         if (_quickViewPrepared is not null)
@@ -2182,6 +2407,16 @@ public sealed class FoundationWindow : Window
         }
         _quickViewState.UpdateOpenDocument(address, args.State.PageTitle);
         RenderQuickView();
+    }
+
+    private async void OnQuickViewNewTabRequested(object? sender, WebViewNewTabRequestedEventArgs args)
+    {
+        if (!ReferenceEquals(sender, _quickViewHost)) return;
+        await CreateTabAsync(new CreateTabBrowserCommand(
+            _windowId,
+            new BrowserTabId(Guid.NewGuid()),
+            args.Target,
+            null));
     }
 
     private BrowserTabState? SelectedTab() => _browserState.SelectedTabId is { } selectedId
@@ -2232,22 +2467,37 @@ public sealed class FoundationWindow : Window
 
     private void ShowSelectedHost(bool keepSelectedNewTabHostVisible = false)
     {
+        if (_fullscreen.IsFullscreen && !ReferenceEquals(_fullscreen.Owner, SelectedHost()))
+            ExitFullscreen();
         var selectedTab = _browserState.SelectedTabId is { } selectedId
             ? _browserState.Tabs.FirstOrDefault(tab => tab.TabId == selectedId)
             : null;
         foreach (var pair in _hosts)
         {
             var isSelected = pair.Key == _browserState.SelectedTabId;
-            var selectedIsNewTab = selectedTab is not null && selectedTab.Address is null;
+            var selectedIsNewTab = selectedTab is not null &&
+                selectedTab.InternalPage == BrowserInternalPageKind.None &&
+                selectedTab.Address is null;
             pair.Value.Visibility = isSelected && (!selectedIsNewTab || keepSelectedNewTabHostVisible)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
-        _newTabPage.Visibility = selectedTab is not null && selectedTab.Address is null
+        foreach (var pair in _settingsTabs)
+        {
+            pair.Value.Visibility = pair.Key == _browserState.SelectedTabId
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+        _newTabPage.Visibility = selectedTab is not null &&
+            selectedTab.InternalPage == BrowserInternalPageKind.None &&
+            selectedTab.Address is null
             ? Visibility.Visible
             : Visibility.Collapsed;
         if (_browserState.SelectedTabId is { } tabId && _hosts.TryGetValue(tabId, out var host))
             _chrome.SetBrowsingContext(host.Context);
+        else if (_browserState.SelectedTabId is { } internalTabId &&
+            selectedTab?.InternalPage != BrowserInternalPageKind.None)
+            _chrome.SetBrowsingContext(new BrowsingContext(_privacy, _windowId, internalTabId, null));
         ApplyOfflineReading();
         UpdateQuickViewAvailability();
     }
@@ -2398,6 +2648,12 @@ public sealed class FoundationWindow : Window
                 {
                     return CommandResult(command, TabControllerCommandOutcome.Failed,
                         "That tab is no longer available to duplicate.");
+                }
+                if (sourceTab.InternalPage == BrowserInternalPageKind.Settings)
+                {
+                    await ShowSettingsAsync();
+                    return CommandResult(command, TabControllerCommandOutcome.Accepted,
+                        "Settings tab selected.");
                 }
                 var duplicateTabId = new BrowserTabId(Guid.NewGuid());
                 await CreateTabAsync(new CreateTabBrowserCommand(
@@ -2612,11 +2868,15 @@ public sealed class FoundationWindow : Window
             {
                 foreach (var tabId in receipt.ClosedTabIds)
                 {
-                    if (!_hosts.Remove(tabId, out var host)) continue;
-                    _tabVisualStates.Remove(tabId);
-                    DetachHost(host);
-                    _webSurface.Children.Remove(host);
-                    await host.DisposeAsync();
+                    if (_hosts.Remove(tabId, out var host))
+                    {
+                        _tabVisualStates.Remove(tabId);
+                        _lastRecordedHistoryAddresses.Remove(tabId);
+                        DetachHost(host);
+                        _webSurface.Children.Remove(host);
+                        await host.DisposeAsync();
+                    }
+                    RemoveSettingsTab(tabId);
                 }
                 ApplyWorkspaceSnapshot(receipt.Snapshot);
                 ShowSelectedHost();
@@ -2685,7 +2945,8 @@ public sealed class FoundationWindow : Window
             ToFoundationPreviewMode(preferences.WorkspacePreviewReveal),
             ToFoundationRailPlacement(preferences.AffiliatedRailPlacement),
             preferences.ShowAffiliatedRail,
-            preferences.SideTabPanelWidth));
+            preferences.SideTabPanelWidth,
+            preferences.ShowAddressBar));
         if (!save.IsSuccess)
         {
             await LoadWorkspacePreferencesAsync();
@@ -2717,15 +2978,7 @@ public sealed class FoundationWindow : Window
         _tabControllerOriginFocus ??= Keyboard.FocusedElement;
         if (_tabControllerWindow is not null)
         {
-            if (!_tabControllerWindow.IsVisible)
-            {
-                _tabControllerWindow.Show();
-            }
-            _tabControllerWindow.Activate();
-            if (focusSelected)
-            {
-                _tabControllerWindow.FocusSelectedTab();
-            }
+            _tabControllerWindow.ShowOrActivate(focusSelected);
             return;
         }
 
@@ -2978,6 +3231,12 @@ public sealed class FoundationWindow : Window
     {
         Closed -= OnClosed;
         _windowLifetime.Cancel();
+        if (_privacy.IsPrivate && _downloads is IPrivateDownloadSessionLifecycle privateDownloads)
+        {
+            // Revoke/erase private download rows and cancel their transfers while
+            // the WebView runtime is still alive to acknowledge cancellation.
+            await privateDownloads.EndPrivateSessionAsync(_privacy);
+        }
         _initialHostReady.TrySetResult(false);
         _startupOverlayCleared.TrySetResult(false);
         _startupLoading.RetryRequested -= OnStartupRetryRequested;
@@ -3026,6 +3285,7 @@ public sealed class FoundationWindow : Window
         {
             _webSurface.Children.Remove(_quickViewHost);
             _quickViewHost.TabVisualStateChanged -= OnQuickViewHostVisualStateChanged;
+            _quickViewHost.NewTabRequested -= OnQuickViewNewTabRequested;
             _quickViewHost = null;
         }
         if (_quickViewPrepared is not null)
@@ -3041,6 +3301,12 @@ public sealed class FoundationWindow : Window
             DetachHost(host);
             await host.DisposeAsync();
         }
+        foreach (var settings in _settingsTabs.Values)
+        {
+            _webSurface.Children.Remove(settings);
+            settings.Dispose();
+        }
+        _settingsTabs.Clear();
         _permissionPrompts.Dispose();
         await LocalPrivacy.RevokeSessionAsync(_privacy);
         if (_privacy.IsPrivate)
@@ -3052,6 +3318,8 @@ public sealed class FoundationWindow : Window
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
+        _chrome.FullscreenExitRequested -= OnFullscreenExitRequested;
+        ExitFullscreen();
         Closing -= OnClosing;
         _windowLifetime.Cancel();
     }

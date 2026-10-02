@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -122,6 +123,17 @@ public sealed class OfflineAndQuickViewVisualTests
             Assert.Same(content, control.WebContent);
             Assert.InRange(control.WebContentHost.ActualWidth, 1, 900);
 
+            var resize = StaTest.FindByAutomationName<Thumb>(control.OverlayPopup, "Resize Quick View");
+            var beforeResize = control.CurrentSurfaceSize;
+            resize.RaiseEvent(new DragDeltaEventArgs(-24, -18)
+            {
+                RoutedEvent = Thumb.DragDeltaEvent,
+            });
+            Assert.True(control.CurrentSurfaceSize.Width > beforeResize.Width);
+            Assert.True(control.CurrentSurfaceSize.Height > beforeResize.Height);
+            Assert.Contains("up and left", AutomationProperties.GetHelpText(resize),
+                StringComparison.OrdinalIgnoreCase);
+
             var expand = StaTest.FindByAutomationName<Button>(control.OverlayPopup, "Expand to normal tab");
             Assert.Contains("preserving", AutomationProperties.GetHelpText(expand), StringComparison.OrdinalIgnoreCase);
             expand.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -136,6 +148,51 @@ public sealed class OfflineAndQuickViewVisualTests
         }
         finally
         {
+            control.OverlayPopup.IsOpen = false;
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public void QuickViewLauncherIsAnIconOnlyTranslucentMagnifierThatDarkensOnHover() => StaTest.Run(() =>
+    {
+        var control = new QuickViewControl { ReducedMotion = true };
+        control.Apply(State(QuickViewHostState.Ready));
+        var window = new Window
+        {
+            Content = control,
+            Width = 900,
+            Height = 650,
+            ShowInTaskbar = false,
+        };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            Assert.IsType<OrbitIcon>(control.AnchorButton.Content);
+            Assert.Equal(48, control.AnchorButton.Width);
+            Assert.True(control.AnchorButton.MinHeight >= 44);
+
+            if (!SystemParameters.HighContrast)
+            {
+                var rest = Assert.IsType<LinearGradientBrush>(control.LauncherSurface.Background);
+                var restAlpha = rest.GradientStops[0].Color.A;
+                Assert.InRange(restAlpha, (byte)160, (byte)210);
+
+                control.LauncherSurface.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0)
+                {
+                    RoutedEvent = Mouse.MouseEnterEvent,
+                });
+                var hover = Assert.IsType<LinearGradientBrush>(control.LauncherSurface.Background);
+                Assert.True(hover.GradientStops[0].Color.A > restAlpha);
+            }
+
+            Assert.Equal("Submit Quick View search or address",
+                AutomationProperties.GetName(control.AnchorButton));
+        }
+        finally
+        {
+            control.OverlayPopup.IsOpen = false;
             window.Close();
         }
     });
@@ -267,7 +324,7 @@ public sealed class OfflineAndQuickViewVisualTests
 
     [Fact]
     [Trait("Category", "InteractiveDesktop")]
-    public void BrowserChromePlacesQuickViewAnchorAtLowerLeftAndForwardsActions() => StaTest.Run(() =>
+    public void BrowserChromePlacesQuickViewAnchorAtLowerRightAndForwardsActions() => StaTest.Run(() =>
     {
         var chrome = new BrowserChromeControl();
         QuickViewAction? requested = null;
@@ -288,10 +345,10 @@ public sealed class OfflineAndQuickViewVisualTests
             var anchor = chrome.QuickView.AnchorButton;
             var chromeOrigin = chrome.PointToScreen(new Point());
             var position = anchor.PointToScreen(new Point());
-            Assert.True(position.X - chromeOrigin.X < 180,
-                $"Expected lower-left anchor, actual X={position.X - chromeOrigin.X}.");
+            Assert.True(position.X - chromeOrigin.X > chrome.ActualWidth - 180,
+                $"Expected lower-right anchor, actual X={position.X - chromeOrigin.X}.");
             Assert.True(position.Y - chromeOrigin.Y > 650,
-                $"Expected lower-left anchor, actual Y={position.Y - chromeOrigin.Y}.");
+                $"Expected lower-right anchor, actual Y={position.Y - chromeOrigin.Y}.");
             Assert.True(chrome.QuickView.OverlayPopup.IsOpen);
             Assert.NotSame(PresentationSource.FromVisual(chrome), PresentationSource.FromVisual(anchor));
             anchor.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -301,6 +358,78 @@ public sealed class OfflineAndQuickViewVisualTests
         {
             window.Close();
         }
+    });
+
+    [Fact]
+    [Trait("Category", "InteractiveDesktop")]
+    public void QuickViewSearchExpandsInwardWithoutMovingTheLowerRightLauncher() => StaTest.Run(() =>
+    {
+        var control = new QuickViewControl { ReducedMotion = true };
+        control.ActionRequested += (_, _) => { };
+        control.ApplyOwnerViewport(new(900, 650));
+        control.Apply(State(QuickViewHostState.Ready));
+        var window = new Window
+        {
+            Content = control,
+            Width = 900,
+            Height = 650,
+            ShowInTaskbar = false,
+        };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            var anchor = control.AnchorButton;
+            var collapsedAnchor = anchor.PointToScreen(new Point());
+
+            Assert.True(anchor.Focus());
+            window.UpdateLayout();
+            Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            var expandedAnchor = anchor.PointToScreen(new Point());
+            var search = control.SearchBox;
+            var searchPosition = search.PointToScreen(new Point());
+
+            Assert.True(control.IsSearchExpanded);
+            Assert.InRange(Math.Abs(expandedAnchor.X - collapsedAnchor.X), 0, 2);
+            Assert.True(searchPosition.X < expandedAnchor.X);
+            Assert.True(search.ActualWidth >= 44);
+            Assert.True(anchor.ActualWidth >= 44 && anchor.ActualHeight >= 44);
+
+            control.WebContent = new Border();
+            control.Apply(State(QuickViewHostState.Open));
+            window.UpdateLayout();
+            Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            var openAnchor = anchor.PointToScreen(new Point());
+            var surface = StaTest.FindByAutomationName<Border>(control.OverlayPopup, "Quick View mini-browser");
+            var surfacePosition = surface.PointToScreen(new Point());
+            Assert.InRange(Math.Abs(openAnchor.X - expandedAnchor.X), 0, 2);
+            Assert.InRange(Math.Abs(openAnchor.Y - expandedAnchor.Y), 0, 2);
+            Assert.True(surfacePosition.X <= openAnchor.X);
+            Assert.True(surfacePosition.Y < openAnchor.Y);
+        }
+        finally
+        {
+            control.OverlayPopup.IsOpen = false;
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public void QuickViewSurfaceFitsCompactViewportAndKeepsInwardResizeSemantics() => StaTest.Run(() =>
+    {
+        var control = new QuickViewControl { ReducedMotion = true };
+        control.ApplyOwnerViewport(new(260, 210));
+        control.WebContent = new Border();
+        control.Apply(State(QuickViewHostState.Open));
+        StaTest.Prepare(control, 260, 210);
+
+        Assert.InRange(control.CurrentSurfaceSize.Width, 1, 260 - (QuickViewControl.ViewportInset * 2));
+        Assert.InRange(control.CurrentSurfaceSize.Height, 1,
+            210 - (QuickViewControl.ViewportInset * 2) - QuickViewControl.LauncherGap -
+            QuickViewControl.LauncherButtonSize - 10);
+        Assert.Equal(HorizontalAlignment.Right, control.LauncherSurface.HorizontalAlignment);
+        Assert.True(control.AnchorButton.MinWidth >= 44 && control.AnchorButton.MinHeight >= 44);
     });
 
     [Fact]

@@ -5,8 +5,8 @@
       "orbitnavigator.clipboardshelf.presentation": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.1.21, )",
-          "OrbitNavigator.Presentation": "[0.1.21, )"
+          "OrbitNavigator.Contracts": "[0.1.25, )",
+          "OrbitNavigator.Presentation": "[0.1.25, )"
         }
       },
       "orbitnavigator.contracts": {
@@ -15,39 +15,39 @@
       "orbitnavigator.foundation": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.1.21, )"
+          "OrbitNavigator.Contracts": "[0.1.25, )"
         }
       },
       "orbitnavigator.presentation": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.1.21, )"
+          "OrbitNavigator.Contracts": "[0.1.25, )"
         }
       },
       "orbitnavigator.privacy": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.1.21, )"
+          "OrbitNavigator.Contracts": "[0.1.25, )"
         }
       },
       "orbitnavigator.sync": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.1.21, )"
+          "OrbitNavigator.Contracts": "[0.1.25, )"
         }
       },
       "orbitnavigator.updates": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.1.21, )"
+          "OrbitNavigator.Contracts": "[0.1.25, )"
         }
       },
       "orbitnavigator.webviewhost": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Web.WebView2": "[1.0.4129.50, )",
-          "OrbitNavigator.Contracts": "[0.1.21, )",
-          "OrbitNavigator.Foundation": "[0.1.21, )"
+          "OrbitNavigator.Contracts": "[0.1.25, )",
+          "OrbitNavigator.Foundation": "[0.1.25, )"
         }
       },
       "Microsoft.Web.WebView2": {

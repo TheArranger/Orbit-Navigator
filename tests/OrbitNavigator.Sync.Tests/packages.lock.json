@@ -93,7 +93,7 @@
       "orbitnavigator.sync": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.1.21, )"
+          "OrbitNavigator.Contracts": "[0.1.25, )"
         }
       }
     }

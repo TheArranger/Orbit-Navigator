@@ -94,6 +94,8 @@ public sealed record BrowserWorkspacePreferences(
 
     public bool ShowAffiliatedRail { get; init; } = true;
 
+    public bool ShowAddressBar { get; init; } = true;
+
     public double SideTabPanelWidth { get; init; } = DefaultSideTabPanelWidth;
 
     public const double MinimumSideTabPanelWidth = 208;

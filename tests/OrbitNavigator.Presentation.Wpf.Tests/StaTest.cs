@@ -8,29 +8,58 @@ namespace OrbitNavigator.Presentation.Wpf.Tests;
 
 internal static class StaTest
 {
+    private static readonly object ExecutionGate = new();
+    private static readonly Lazy<Dispatcher> TestDispatcher = new(CreateDispatcher);
+    private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(30);
+
     public static void Run(Action action)
     {
         ArgumentNullException.ThrowIfNull(action);
-        ExceptionDispatchInfo? failure = null;
+        lock (ExecutionGate)
+        {
+            var dispatcher = TestDispatcher.Value;
+            ExceptionDispatchInfo? failure = null;
+            var operation = dispatcher.InvokeAsync(() =>
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception exception)
+                {
+                    failure = ExceptionDispatchInfo.Capture(exception);
+                }
+            });
+            operation.Task.WaitAsync(TestTimeout).GetAwaiter().GetResult();
+            // Drain deferred popup/unload work before the next assertion creates
+            // another window. Keep the STA alive, just like the real application.
+            dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle)
+                .Task.WaitAsync(TestTimeout).GetAwaiter().GetResult();
+            failure?.Throw();
+        }
+    }
+
+    private static Dispatcher CreateDispatcher()
+    {
+        var ready = new TaskCompletionSource<Dispatcher>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
-            try
-            {
-                action();
-            }
-            catch (Exception exception)
-            {
-                failure = ExceptionDispatchInfo.Capture(exception);
-            }
-            finally
-            {
-                Dispatcher.CurrentDispatcher.InvokeShutdown();
-            }
-        });
+            var dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(dispatcher));
+            ready.SetResult(dispatcher);
+            Dispatcher.Run();
+        })
+        {
+            IsBackground = true,
+            Name = "Orbit WPF test dispatcher",
+        };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        thread.Join();
-        failure?.Throw();
+        // Repeated per-test InvokeShutdown can deadlock WPF's native WISP tablet
+        // worker while destroying popup capture HWNDs. A single pumped STA also
+        // models production more faithfully; the background thread ends with the
+        // disposable testhost rather than delaying test-process termination.
+        return ready.Task.WaitAsync(TestTimeout).GetAwaiter().GetResult();
     }
 
     public static void Prepare(FrameworkElement element, double width = 1200, double height = 800)

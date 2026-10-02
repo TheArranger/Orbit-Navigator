@@ -7,12 +7,12 @@ using Xunit;
 
 namespace OrbitNavigator.Updates.Tests;
 
-public sealed class BetaUpdateClientTests
+public sealed class PrimaryUpdateClientTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 16, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task UnsignedBetaRequiresOptInAndSeparatePerPackageConfirmation()
+    public async Task UnsignedPrimaryUsesSignedManifestAndRequiresPerPackageConfirmation()
     {
         using var temp = new TempDirectory();
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -20,10 +20,10 @@ public sealed class BetaUpdateClientTests
         var packageHash = Convert.ToHexString(SHA256.HashData(packageBytes));
         var document = Sign(key, new(
             1,
-            "beta",
+            "primary",
             1,
             "0.1.14",
-            "https://orbit-nav-updater.snap-it.cc/beta/OrbitNavigator-0.1.14-beta.1.exe",
+            "https://orbit-nav-updater.snap-it.cc/primary/OrbitNavigator-0.1.14.exe",
             packageHash,
             packageBytes.Length,
             true,
@@ -33,17 +33,17 @@ public sealed class BetaUpdateClientTests
             Now.AddMinutes(-1),
             10_000,
             10_000,
-            "beta-test",
+            "primary-test",
             string.Empty));
         var handler = new FeedHandler(
             JsonSerializer.SerializeToUtf8Bytes(document, JsonOptions),
             packageBytes);
         var launcher = new FakeLauncher();
-        await using var client = new BetaUpdateClient(
+        await using var client = new PrimaryUpdateClient(
             new HttpClient(handler),
             new FileUpdateClientStateStore(Path.Combine(temp.Path, "client.json")),
             new UpdateManifestPublicKey(
-                "beta-test",
+                "primary-test",
                 Convert.ToBase64String(key.ExportSubjectPublicKeyInfo())),
             new FixedTrustInspector(UpdatePublisherTrust.Unsigned),
             launcher,
@@ -52,17 +52,13 @@ public sealed class BetaUpdateClientTests
             new FixedTimeProvider(Now));
         await client.InitializeAsync();
 
-        var disabled = await client.CheckAsync();
-        var optedIn = await client.SetBetaOptInAsync(true);
         var checkedResult = await client.CheckAsync();
         var downloaded = await client.DownloadAsync();
         var withoutConfirmation = await client.ApproveAndLaunchAsync(false);
         var withConfirmation = await client.ApproveAndLaunchAsync(true);
 
-        Assert.False(disabled.IsSuccess);
-        Assert.True(optedIn.IsSuccess);
-        Assert.Equal(BetaUpdateLifecycle.Available, checkedResult.Value?.Lifecycle);
-        Assert.Equal(BetaUpdateLifecycle.ReadyToInstall, downloaded.Value?.Lifecycle);
+        Assert.Equal(PrimaryUpdateLifecycle.Available, checkedResult.Value?.Lifecycle);
+        Assert.Equal(PrimaryUpdateLifecycle.ReadyToInstall, downloaded.Value?.Lifecycle);
         Assert.Equal(UpdatePublisherTrust.Unsigned, downloaded.Value?.PublisherTrust);
         Assert.False(withoutConfirmation.IsSuccess);
         Assert.Equal(ControllerErrorCode.PolicyDenied, withoutConfirmation.Error?.Code);
@@ -70,6 +66,37 @@ public sealed class BetaUpdateClientTests
         Assert.Equal(1, launcher.Calls);
         Assert.Equal(1, handler.ManifestCalls);
         Assert.Equal(1, handler.PackageCalls);
+    }
+
+    [Fact]
+    public async Task LegacyBetaSelectionMigratesToTheSinglePrimaryChannel()
+    {
+        using var temp = new TempDirectory();
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var statePath = Path.Combine(temp.Path, "client.json");
+        var stateStore = new FileUpdateClientStateStore(statePath);
+        await stateStore.SaveAsync(UpdateClientState.CreateNew().SelectChannel(
+            UpdateReleaseChannel.Beta,
+            explicitUserOptIn: true));
+        await using var client = new PrimaryUpdateClient(
+            new HttpClient(new FeedHandler([], [])),
+            stateStore,
+            new UpdateManifestPublicKey(
+                "primary-test",
+                Convert.ToBase64String(key.ExportSubjectPublicKeyInfo())),
+            new FixedTrustInspector(UpdatePublisherTrust.Unsigned),
+            new FakeLauncher(),
+            Path.Combine(temp.Path, "staging"),
+            new Version(0, 1, 13),
+            new FixedTimeProvider(Now));
+
+        await client.InitializeAsync();
+        var migrated = await stateStore.LoadOrCreateAsync();
+
+        Assert.Equal(UpdateReleaseChannel.Primary, migrated.Channel);
+        Assert.False(migrated.BetaChannelOptIn);
+        Assert.NotNull(migrated.NextCheckNotBeforeUtc);
+        Assert.Equal(PrimaryUpdateLifecycle.Idle, client.Snapshot.Lifecycle);
     }
 
     [Fact]
@@ -117,14 +144,14 @@ public sealed class BetaUpdateClientTests
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            if (request.RequestUri == BetaUpdateClient.ManifestUri)
+            if (request.RequestUri == PrimaryUpdateClient.ManifestUri)
             {
                 ManifestCalls++;
                 var response = new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new ByteArrayContent(manifest),
                 };
-                response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"beta-1\"");
+                response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"primary-1\"");
                 response.Content.Headers.ContentType = new("application/json");
                 return Task.FromResult(response);
             }

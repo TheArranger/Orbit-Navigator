@@ -93,15 +93,15 @@
       "orbitnavigator.foundation": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.1.21, )"
+          "OrbitNavigator.Contracts": "[0.1.25, )"
         }
       },
       "orbitnavigator.webviewhost": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Web.WebView2": "[1.0.4129.50, )",
-          "OrbitNavigator.Contracts": "[0.1.21, )",
-          "OrbitNavigator.Foundation": "[0.1.21, )"
+          "OrbitNavigator.Contracts": "[0.1.25, )",
+          "OrbitNavigator.Foundation": "[0.1.25, )"
         }
       },
       "Microsoft.Web.WebView2": {

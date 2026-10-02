@@ -109,6 +109,7 @@ public sealed class TabControllerVisualTests
         }
         finally
         {
+            control.CloseActiveFlyout();
             window.Close();
         }
     });
@@ -482,6 +483,7 @@ public sealed class TabControllerVisualTests
         }
         finally
         {
+            control.CloseActiveFlyout();
             window.Close();
         }
     });
