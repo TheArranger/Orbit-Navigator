@@ -24,9 +24,13 @@ public static class TabStripViewportModel
     public const double SafeTopTabExtent = 88;
     public const double CompactTopTabExtent = 88;
     public const double AudibleCompactTopTabExtent = 132;
+    public const double AudibleSafeTopTabExtent = 132;
     public const double SafeVerticalEntryExtent = 48;
+    public const double CompactVerticalEntryExtent = 44;
     public const double MinimumVerticalColumnWidth = 136;
     public const double PreferredVerticalColumnWidth = 184;
+    public const double CompactMinimumVerticalColumnWidth = 92;
+    public const double CompactPreferredVerticalColumnWidth = 112;
     public const double VerticalColumnSpacing = 4;
     public const double ReservedVerticalScrollbarGutter = 18;
     public const double ReadableTitleThreshold = 132;
@@ -76,11 +80,13 @@ public static class TabStripViewportModel
 
         var vertical = detached || placement is TabStripPlacement.Left or TabStripPlacement.Right;
         var baseMinimumExtent = vertical
-            ? SafeVerticalEntryExtent
-            : SafeTopTabExtent;
+            ? compactMode ? CompactVerticalEntryExtent : SafeVerticalEntryExtent
+            : compactMode ? CompactTopTabExtent : SafeTopTabExtent;
         var minimumExtent = Math.Max(baseMinimumExtent, minimumEntryExtentOverride);
         var extent = vertical
-            ? SafeVerticalEntryExtent
+            ? baseMinimumExtent
+            : compactMode
+            ? minimumExtent
             : Math.Clamp(
                 availableExtent / Math.Max(1, canonicalEntries.Count),
                 minimumExtent,

@@ -1,7 +1,9 @@
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using OrbitNavigator.Presentation.Wpf;
 using Xunit;
 
@@ -9,6 +11,32 @@ namespace OrbitNavigator.App.Tests;
 
 public sealed class FoundationSettingsControlVisualTests
 {
+    [Fact]
+    public void BundledChangelogIsOfflineReadableAndClearlySeparatesUnreleasedChanges() => RunSta(() =>
+    {
+        var section = FoundationSettingsControl.CreateChangelogSection();
+        Assert.False(section.IsExpanded);
+        Assert.Equal("Changelog — what's new", AutomationProperties.GetName(section));
+        Assert.True(section.MinHeight >= 44);
+        var scroll = Assert.IsType<ScrollViewer>(section.Content);
+        Assert.Equal(ScrollBarVisibility.Auto, scroll.VerticalScrollBarVisibility);
+        Assert.Equal("Orbit Navigator changelog", AutomationProperties.GetName(scroll));
+        Assert.IsType<Style>(scroll.Resources[typeof(ScrollBar)]);
+        var notes = ReleaseNotesContent.Read();
+        Assert.Contains("## Unreleased", notes);
+        Assert.Contains("## 0.1.27", notes);
+        Assert.DoesNotContain("unavailable in this build", notes);
+        Assert.InRange(notes.Length, 1, ReleaseNotesContent.MaximumCharacters);
+        var paragraphs = Assert.IsType<StackPanel>(scroll.Content);
+        Assert.All(paragraphs.Children.Cast<TextBlock>(), text =>
+        {
+            Assert.Equal(TextWrapping.Wrap, text.TextWrapping);
+            Assert.Equal(FoundationSettingsControl.SettingsTextBrush, text.Foreground);
+            Assert.DoesNotContain("##", text.Text);
+        });
+        Assert.DoesNotContain(ReleaseNotesContent.GetDisplayBlocks(), block => block.Text == "Maintaining this file");
+    });
+
     [Fact]
     public void SettingsChromeUsesReadableThemeAndAccessibleActionBounds() => RunSta(() =>
     {
@@ -43,6 +71,7 @@ public sealed class FoundationSettingsControlVisualTests
         Assert.Equal(FoundationSettingsControl.SettingsBackgroundBrush, scroll.Background);
         Assert.Equal(FoundationSettingsControl.SettingsTextBrush, scroll.Foreground);
         Assert.Equal(ScrollBarVisibility.Auto, scroll.VerticalScrollBarVisibility);
+        Assert.IsType<Style>(scroll.Resources[typeof(ScrollBar)]);
     });
 
     private static void RunSta(Action action)

@@ -93,7 +93,7 @@
       "orbitnavigator.foundation": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.1.26, )"
+          "OrbitNavigator.Contracts": "[0.1.28, )"
         }
       }
     }

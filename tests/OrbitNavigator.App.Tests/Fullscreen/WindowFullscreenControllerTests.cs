@@ -71,6 +71,34 @@ public sealed class WindowFullscreenControllerTests
         window.Close();
     });
 
+    [Theory]
+    [InlineData(WindowState.Normal)]
+    [InlineData(WindowState.Maximized)]
+    public void SynchronousChromeRejectionCannotLeaveNativeWindowStuckInFullscreen(WindowState initialState) => RunSta(() =>
+    {
+        var window = CreateWindow();
+        window.WindowState = initialState;
+        var applications = new List<bool>();
+        WindowFullscreenController? controller = null;
+        controller = new(window, fullscreen =>
+        {
+            applications.Add(fullscreen);
+            if (fullscreen) controller!.Exit();
+        });
+
+        controller.Update(new object(), isSelected: true, isFullscreen: true);
+
+        Assert.False(controller.IsFullscreen);
+        Assert.Null(controller.Owner);
+        Assert.Equal(initialState, window.WindowState);
+        Assert.Equal(WindowStyle.ThreeDBorderWindow, window.WindowStyle);
+        Assert.Equal(ResizeMode.CanResizeWithGrip, window.ResizeMode);
+        Assert.Equal(920, window.Width);
+        Assert.Equal(680, window.Height);
+        Assert.Equal(new[] { true, false }, applications);
+        window.Close();
+    });
+
     [Fact]
     public void RepeatedEventsDoNotReplaceRestoreSnapshotOrRepeatChromeChanges() => RunSta(() =>
     {
@@ -137,10 +165,10 @@ public sealed class WindowFullscreenControllerTests
             try { action(); }
             catch (Exception exception) { failure = ExceptionDispatchInfo.Capture(exception); }
             finally { Dispatcher.CurrentDispatcher.InvokeShutdown(); }
-        });
+        }) { IsBackground = true };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        thread.Join();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "The non-displaying fullscreen test exceeded its deadline.");
         failure?.Throw();
     }
 }

@@ -24,6 +24,7 @@ public sealed class OfflineLibraryControl : Grid
 
     public OfflineLibraryControl()
     {
+        OrbitVisualTheme.ApplyScrollBarTheme(this);
         Background = SystemParameters.HighContrast ? SystemColors.WindowBrush : OrbitVisualTheme.Canvas;
         Margin = new Thickness(0);
         AutomationProperties.SetName(this, "Offline library");

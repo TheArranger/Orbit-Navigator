@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Media;
 
 using OrbitNavigator.Contracts.Browser;
 using OrbitNavigator.Contracts.Common;
@@ -277,6 +278,151 @@ public sealed class StartupAndNewTabVisualTests
     }
 
     [Fact]
+    public void NewTabFitsTheEffectiveViewportAt640WithSideTabsAndAffiliateRail()
+    {
+        StaTest.Run(() =>
+        {
+            var page = new NewTabPageControl { ReducedMotion = true };
+            var profileId = new ProfileId(Guid.NewGuid());
+            page.SetWorkspaceData(
+                [new BookmarkEntry(
+                    new BookmarkId(profileId, Guid.NewGuid()),
+                    new Uri("https://docs.example.test"),
+                    "Project docs",
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow)],
+                [new WorkspacePresetPresentation(
+                    new WorkspacePresetPresentationId(profileId, Guid.NewGuid()),
+                    "Daily orbit",
+                    "Daily",
+                    [new(new Uri("https://mail.example.test"), "Mail")])]);
+            page.ApplyWorkspacePreferences(BrowserWorkspacePreferences.Default with
+            {
+                TabStripPlacement = TabStripPlacement.Right,
+                SideTabPanelWidth = 212,
+                AffiliatedRailPlacement = AffiliatedRailPlacement.Right,
+                ShowAffiliatedRail = true,
+            });
+            var host = new Grid();
+            host.ColumnDefinitions.Add(new ColumnDefinition());
+            host.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(212) });
+            Grid.SetColumn(page, 0);
+            host.Children.Add(page);
+            var sideTabs = new Border { Width = 212 };
+            Grid.SetColumn(sideTabs, 1);
+            host.Children.Add(sideTabs);
+
+            StaTest.Prepare(host, 640, 720);
+            // SizeChanged adjusts widths after the first arrange; exercise the
+            // settled pass that the real browser renders.
+            host.UpdateLayout();
+
+            Assert.InRange(page.ActualWidth, 427, 429);
+            var affiliate = Assert.Single(StaTest.Descendants(page).OfType<AffiliatedSitesControl>());
+            Assert.Equal(Visibility.Visible, affiliate.Visibility);
+            Assert.InRange(affiliate.ActualWidth, 119, 121);
+            Assert.All(
+                StaTest.Descendants(affiliate).OfType<Button>().Where(button => button.Visibility == Visibility.Visible),
+                button => Assert.True(button.ActualWidth >= 44 && button.ActualHeight >= 44));
+
+            var scroller = StaTest.Descendants(page).OfType<ScrollViewer>()
+                .Single(value => value.VerticalScrollBarVisibility == ScrollBarVisibility.Auto);
+            Assert.True(scroller.ViewportWidth > 250);
+            Assert.True(scroller.ExtentWidth <= scroller.ViewportWidth + .5,
+                $"New Tab content is horizontally clipped: extent={scroller.ExtentWidth:0.##}, viewport={scroller.ViewportWidth:0.##}.");
+
+            var search = StaTest.FindByAutomationName<TextBox>(page, "Search or enter address");
+            var submit = StaTest.FindByAutomationName<Button>(page, "Search with DuckDuckGo");
+            Assert.True(search.ActualWidth >= 180);
+            Assert.True(submit.ActualWidth >= 44 && submit.ActualHeight >= 44);
+            var workspace = StaTest.FindByAutomationName<Border>(page, "Quick launch workspace");
+            Assert.True(workspace.ActualWidth <= scroller.ViewportWidth + .5);
+            Assert.Equal(Visibility.Collapsed,
+                Assert.Single(StaTest.Descendants(page).OfType<StellarHubControl>(), hub => hub.Kind == StellarHubKind.Bookmarks).Visibility);
+            Assert.Equal(Visibility.Visible,
+                StaTest.FindByAutomationName<Button>(page, "Open bookmark Project docs").Visibility);
+            Assert.Equal(Visibility.Visible,
+                StaTest.FindByAutomationName<Button>(page, "Open workspace Daily orbit, 1 tabs").Visibility);
+
+            var viewportBounds = VisualBounds(scroller, page);
+            foreach (var button in StaTest.Descendants(scroller).OfType<Button>()
+                         .Where(button => button.Visibility == Visibility.Visible && button.ActualWidth > 0))
+            {
+                var bounds = VisualBounds(button, page);
+                Assert.True(bounds.Left >= viewportBounds.Left - .5 && bounds.Right <= viewportBounds.Right + .5,
+                    $"'{AutomationProperties.GetName(button)}' is clipped horizontally: {bounds} outside {viewportBounds}.");
+                Assert.True(bounds.Height >= 44,
+                    $"'{AutomationProperties.GetName(button)}' is below the 44 DIP interactive-target minimum.");
+            }
+        });
+    }
+
+    [Fact]
+    public void NewTabRecomputesFromItsSettledViewportAcrossWideNarrowWideResize()
+    {
+        StaTest.Run(() =>
+        {
+            var profileId = new ProfileId(Guid.NewGuid());
+            var page = new NewTabPageControl { ReducedMotion = true };
+            page.SetWorkspaceData(
+                [new BookmarkEntry(
+                    new BookmarkId(profileId, Guid.NewGuid()),
+                    new Uri("https://docs.example.test"),
+                    "Project docs",
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow)],
+                []);
+            page.ApplyWorkspacePreferences(BrowserWorkspacePreferences.Default with
+            {
+                TabStripPlacement = TabStripPlacement.Right,
+                SideTabPanelWidth = 212,
+                AffiliatedRailPlacement = AffiliatedRailPlacement.Right,
+                ShowAffiliatedRail = true,
+                NewTabMode = NewTabVisualMode.Stellar,
+            });
+            var host = new Grid();
+            host.ColumnDefinitions.Add(new ColumnDefinition());
+            host.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(212) });
+            host.Children.Add(page);
+            var sideTabs = new Border();
+            Grid.SetColumn(sideTabs, 1);
+            host.Children.Add(sideTabs);
+
+            var search = StaTest.FindByAutomationName<TextBox>(page, "Search or enter address");
+            var scroller = StaTest.Descendants(page).OfType<ScrollViewer>()
+                .Single(value => value.VerticalScrollBarVisibility == ScrollBarVisibility.Auto);
+            var hub = Assert.Single(
+                StaTest.Descendants(page).OfType<StellarHubControl>(),
+                value => value.Kind == StellarHubKind.Bookmarks);
+            var listTile = StaTest.FindByAutomationName<Button>(page, "Open bookmark Project docs");
+            var list = Assert.IsType<WrapPanel>(LogicalTreeHelper.GetParent(listTile));
+
+            StaTest.Prepare(host, 1200, 720);
+            var wideSearchWidth = search.ActualWidth;
+            var wideViewportWidth = scroller.ViewportWidth;
+            Assert.Equal(Visibility.Visible, hub.Visibility);
+            Assert.Equal(Visibility.Collapsed, list.Visibility);
+            Assert.True(scroller.ExtentWidth <= scroller.ViewportWidth + .5);
+
+            StaTest.Prepare(host, 640, 720);
+            var narrowSearchWidth = search.ActualWidth;
+            Assert.True(scroller.ViewportWidth < wideViewportWidth);
+            Assert.True(narrowSearchWidth < wideSearchWidth);
+            Assert.Equal(Visibility.Collapsed, hub.Visibility);
+            Assert.Equal(Visibility.Visible, list.Visibility);
+            Assert.True(scroller.ExtentWidth <= scroller.ViewportWidth + .5);
+
+            StaTest.Prepare(host, 1200, 720);
+            Assert.InRange(search.ActualWidth, wideSearchWidth - .5, wideSearchWidth + .5);
+            Assert.InRange(scroller.ViewportWidth, wideViewportWidth - .5, wideViewportWidth + .5);
+            Assert.Equal(Visibility.Visible, hub.Visibility);
+            Assert.Equal(Visibility.Collapsed, list.Visibility);
+            Assert.True(scroller.ExtentWidth <= scroller.ViewportWidth + .5);
+            Assert.Equal(NewTabVisualMode.Stellar, page.WorkspacePreferences.NewTabMode);
+        });
+    }
+
+    [Fact]
     public void NewTabDecorationUsesExistingAssetWithStaticReducedMotionFallback()
     {
         StaTest.Run(() =>
@@ -295,6 +441,9 @@ public sealed class StartupAndNewTabVisualTests
                 image => image.Source is not null);
         });
     }
+
+    private static Rect VisualBounds(FrameworkElement element, Visual ancestor) =>
+        element.TransformToAncestor(ancestor).TransformBounds(new Rect(element.RenderSize));
 
     [Fact]
     public void MissingBackgroundUsesFallbackWhileHubIgnoresLegacyPathAndUsesPackagedV3()

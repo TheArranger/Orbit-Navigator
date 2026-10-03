@@ -44,3 +44,8 @@ Every change requires review. A release must be produced from a reviewed,
 versioned commit by the documented build scripts. Signing approval is separate
 from code review; contributors do not receive access to signing credentials.
 See `CODE_SIGNING_POLICY.md`.
+
+Add user-visible fixes, changes, and known limitations to the Unreleased section
+of `CHANGELOG.md`. The browser bundles this file in Settings. Release preparation
+moves verified notes into a dated version section; unreleased work must never be
+described as already delivered.

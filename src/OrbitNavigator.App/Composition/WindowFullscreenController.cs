@@ -23,13 +23,20 @@ internal sealed class WindowFullscreenController(Window window, Action<bool> app
         var bounds = window.WindowState == WindowState.Normal
             ? new Rect(window.Left, window.Top, window.Width, window.Height)
             : window.RestoreBounds;
-        _snapshot = new(window.WindowState, window.WindowStyle, window.ResizeMode, bounds);
+        var entry = new WindowSnapshot(window.WindowState, window.WindowStyle, window.ResizeMode, bounds);
+        _snapshot = entry;
         Owner = owner;
+        // Suspend the custom non-client frame before native maximization so the
+        // host selects the full monitor, not its taskbar-excluding work area.
+        applyChrome(true);
+        // Applying browser chrome can synchronously reject fullscreen (for
+        // example, an already-visible permission prompt requests Exit). Do not
+        // re-enter native fullscreen after that callback restored the window.
+        if (!ReferenceEquals(_snapshot, entry) || !ReferenceEquals(Owner, owner)) return;
         window.WindowState = WindowState.Normal;
         window.WindowStyle = WindowStyle.None;
         window.ResizeMode = ResizeMode.NoResize;
         window.WindowState = WindowState.Maximized;
-        applyChrome(true);
     }
 
     public void Exit()
@@ -40,6 +47,7 @@ internal sealed class WindowFullscreenController(Window window, Action<bool> app
         window.WindowState = WindowState.Normal;
         window.WindowStyle = snapshot.Style;
         window.ResizeMode = snapshot.ResizeMode;
+        applyChrome(false);
         if (!snapshot.Bounds.IsEmpty)
         {
             window.Left = snapshot.Bounds.Left;
@@ -48,7 +56,6 @@ internal sealed class WindowFullscreenController(Window window, Action<bool> app
             window.Height = snapshot.Bounds.Height;
         }
         window.WindowState = snapshot.State;
-        applyChrome(false);
     }
 
     private sealed record WindowSnapshot(

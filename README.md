@@ -26,9 +26,12 @@ Project links: [Paradox portfolio](https://iamtheparadox.com/) and
 
 ## Download and update
 
-[Download Orbit Navigator 0.1.27 for Windows x64](https://orbit-nav-updater.snap-it.cc/primary/OrbitNavigator-0.1.27.exe).
+[Download Orbit Navigator 0.1.28 for Windows x64](https://orbit-nav-updater.snap-it.cc/primary/OrbitNavigator-0.1.28.exe).
 The installer includes the offline WebView2 prerequisite. Install over an
 existing copy to retain the local browser profile. Close Orbit before updating.
+
+Read the [changelog](CHANGELOG.md) for user-visible changes. The same changelog
+is available offline inside Settings in development builds and future releases.
 
 The browser uses one Primary update feed, with signed manifest, version, and
 package-hash checks. Download and installation remain user-controlled. This
