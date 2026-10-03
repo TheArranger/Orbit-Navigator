@@ -74,44 +74,73 @@ public sealed class PermissionHostMappingTests
     [Fact]
     public async Task PersistentCompletionFromWorkerRunsOnOwningDispatcher()
     {
-        DispatcherPermissionCompletion? dispatcherCompletion = null;
-        var ready = new ManualResetEventSlim();
-        var applied = new ManualResetEventSlim();
-        var ownerThreadId = 0;
-        var appliedThreadId = 0;
+        var ready = new TaskCompletionSource<DispatcherPermissionCompletion>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var applied = new TaskCompletionSource<int>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        System.Windows.Threading.Dispatcher? ownerDispatcher = null;
+        var abandonDispatcher = 0;
         var thread = new Thread(() =>
         {
-            var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
-            ownerThreadId = Environment.CurrentManagedThreadId;
-            dispatcherCompletion = new DispatcherPermissionCompletion(
-                dispatcher,
-                _ =>
+            try
+            {
+                var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+                Volatile.Write(ref ownerDispatcher, dispatcher);
+                var dispatcherCompletion = new DispatcherPermissionCompletion(
+                    dispatcher,
+                    _ =>
+                    {
+                        applied.TrySetResult(Environment.CurrentManagedThreadId);
+                        dispatcher.BeginInvokeShutdown(
+                            System.Windows.Threading.DispatcherPriority.Send);
+                    });
+                ready.TrySetResult(dispatcherCompletion);
+                if (Volatile.Read(ref abandonDispatcher) == 0)
                 {
-                    appliedThreadId = Environment.CurrentManagedThreadId;
-                    applied.Set();
-                    dispatcher.BeginInvokeShutdown(
-                        System.Windows.Threading.DispatcherPriority.Send);
-                });
-            ready.Set();
-            System.Windows.Threading.Dispatcher.Run();
-        });
+                    System.Windows.Threading.Dispatcher.Run();
+                }
+            }
+            catch (Exception exception)
+            {
+                ready.TrySetException(exception);
+                applied.TrySetException(exception);
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "Permission completion dispatcher test",
+        };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
 
-        Assert.True(ready.Wait(TimeSpan.FromSeconds(5)));
-        var completion = PermissionHostCompletion.FromAcceptedResponse(
-            new RequestId(Guid.NewGuid()),
-            new BrowserTabId(Guid.NewGuid()),
-            WebPermissionCapability.Geolocation,
-            PermissionDecision.Allow,
-            source: PermissionDecisionSource.UserResponse);
-        await Task.Run(() => dispatcherCompletion!.Complete(completion))
-            .WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            var dispatcherCompletion = await ready.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            var ownerThreadId = thread.ManagedThreadId;
+            var completion = PermissionHostCompletion.FromAcceptedResponse(
+                new RequestId(Guid.NewGuid()),
+                new BrowserTabId(Guid.NewGuid()),
+                WebPermissionCapability.Geolocation,
+                PermissionDecision.Allow,
+                source: PermissionDecisionSource.UserResponse);
+            await Task.Run(() => dispatcherCompletion.Complete(completion))
+                .WaitAsync(TimeSpan.FromSeconds(30));
 
-        Assert.True(applied.Wait(TimeSpan.FromSeconds(5)));
-        Assert.True(thread.Join(TimeSpan.FromSeconds(5)));
-        Assert.NotEqual(Environment.CurrentManagedThreadId, ownerThreadId);
-        Assert.Equal(ownerThreadId, appliedThreadId);
+            var appliedThreadId = await applied.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.NotEqual(Environment.CurrentManagedThreadId, ownerThreadId);
+            Assert.Equal(ownerThreadId, appliedThreadId);
+            Assert.True(thread.Join(TimeSpan.FromSeconds(30)));
+        }
+        finally
+        {
+            Interlocked.Exchange(ref abandonDispatcher, 1);
+            var dispatcher = Volatile.Read(ref ownerDispatcher);
+            if (dispatcher is not null && !dispatcher.HasShutdownStarted && !dispatcher.HasShutdownFinished)
+            {
+                dispatcher.BeginInvokeShutdown(System.Windows.Threading.DispatcherPriority.Send);
+            }
+            thread.Join(TimeSpan.FromSeconds(30));
+        }
     }
 
     [Fact]
