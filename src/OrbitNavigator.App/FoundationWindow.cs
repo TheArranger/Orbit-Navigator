@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.ComponentModel;
 using System.IO;
 using System.Windows.Input;
@@ -43,7 +44,10 @@ public sealed class FoundationWindow : Window
     private readonly BrowserChromeControl _chrome = new();
     private readonly StartupLoadingOverlay _startupLoading = new();
     private readonly Grid _webSurface = new();
+    private readonly Grid _compositionRoot = new();
     private readonly WindowFullscreenController _fullscreen;
+    private readonly BrowserWindowChromeController _windowChrome;
+    private readonly SettingsTabRoute _settingsRoute = new();
     private readonly NewTabPageControl _newTabPage = new();
     private readonly IBrowserWorkspaceAuditSink? _workspaceAudit;
     private readonly Dictionary<BrowserTabId, WebView2HostControl> _hosts = [];
@@ -136,8 +140,18 @@ public sealed class FoundationWindow : Window
         Action retryStartup,
         IBrowserWorkspaceAuditSink? workspaceAudit = null)
     {
-        _fullscreen = new(this, _chrome.ApplyFullscreen);
+        _windowChrome = new(this, _chrome.ApplyWindowState, inset => _compositionRoot.Margin = inset);
+        SetBinding(BackgroundProperty, new Binding(nameof(Panel.Background)) { Source = _chrome });
+        _fullscreen = new(this, fullscreen =>
+        {
+            _windowChrome.ApplyFullscreen(fullscreen);
+            _chrome.ApplyFullscreen(fullscreen);
+        });
         _chrome.FullscreenExitRequested += OnFullscreenExitRequested;
+        _chrome.WindowMinimizeRequested += OnWindowMinimizeRequested;
+        _chrome.WindowMaximizeRestoreRequested += OnWindowMaximizeRestoreRequested;
+        _chrome.WindowCloseRequested += OnWindowCloseRequested;
+        _chrome.WindowDragRequested += OnWindowDragRequested;
         _initialHost = initialHost ?? throw new ArgumentNullException(nameof(initialHost));
         Ux = ux ?? throw new ArgumentNullException(nameof(ux));
         PrivacyPersistence = privacyPersistence ?? throw new ArgumentNullException(nameof(privacyPersistence));
@@ -262,11 +276,10 @@ public sealed class FoundationWindow : Window
         _siteProtection.ReloadRequested += OnProtectionReloadRequested;
         Ux.Shell.SetPrivateMode(_privacy.IsPrivate);
         RenderBrowserState();
-        var compositionRoot = new Grid();
-        compositionRoot.Children.Add(_chrome);
-        compositionRoot.Children.Add(_startupLoading);
+        _compositionRoot.Children.Add(_chrome);
+        _compositionRoot.Children.Add(_startupLoading);
         Panel.SetZIndex(_startupLoading, 1);
-        Content = compositionRoot;
+        Content = _compositionRoot;
         Closing += OnClosing;
         Closed += OnClosed;
         Loaded += OnLoaded;
@@ -522,7 +535,7 @@ public sealed class FoundationWindow : Window
             _privacy,
             _workspacePreferencesRevision,
             ToFoundationPlacement(args.Preferences.TabStripPlacement),
-            args.Preferences.CollapseToActive,
+            false,
             args.Preferences.ShowOrbitalGroupPreview,
             _chrome.IsCompactTabMode,
             ToFoundationNewTabMode(args.Preferences.NewTabMode),
@@ -560,7 +573,7 @@ public sealed class FoundationWindow : Window
             _privacy,
             _workspacePreferencesRevision,
             ToFoundationPlacement(current.TabStripPlacement),
-            current.CollapseToActive,
+            false,
             current.ShowOrbitalGroupPreview,
             args.IsCompactModeRequested,
             ToFoundationNewTabMode(current.NewTabMode),
@@ -1101,11 +1114,7 @@ public sealed class FoundationWindow : Window
             _privacy,
             _history,
             _downloads,
-            _settings,
             _clipboardShelf,
-            _myOrbitAccountSettings,
-            _updates,
-            GetSelectedBrowsingContext,
             OpenUtilityTargetAsync)
         {
             Owner = this,
@@ -1126,11 +1135,7 @@ public sealed class FoundationWindow : Window
             _privacy,
             _history,
             _downloads,
-            _settings,
             _clipboardShelf,
-            _myOrbitAccountSettings,
-            _updates,
-            GetSelectedBrowsingContext,
             OpenUtilityTargetAsync)
         {
             Owner = this,
@@ -1145,11 +1150,7 @@ public sealed class FoundationWindow : Window
             _privacy,
             _history,
             _downloads,
-            _settings,
             _clipboardShelf,
-            _myOrbitAccountSettings,
-            _updates,
-            GetSelectedBrowsingContext,
             OpenUtilityTargetAsync)
         {
             Owner = this,
@@ -1160,33 +1161,18 @@ public sealed class FoundationWindow : Window
 
     private async Task ShowSettingsAsync()
     {
-        var existing = InternalPageTabRoute.FindOpenTab(
-            _browserState,
-            BrowserInternalPageKind.Settings);
-        if (existing is { } existingTabId)
+        var opened = await _settingsRoute.OpenAsync(_workspaceCoordinator, _windowLifetime.Token);
+        if (!opened.IsSuccess || opened.Value!.Snapshot.Browser.SelectedTabId is not { } tabId) return;
+        var created = !_settingsTabs.TryGetValue(tabId, out var settings);
+        if (created)
         {
-            await SelectTabAsync(existingTabId);
-            return;
+            settings = CreateSettingsTab(tabId);
+            _settingsTabs.Add(tabId, settings);
+            _webSurface.Children.Add(settings);
         }
-
-        var tabId = new BrowserTabId(Guid.NewGuid());
-        var added = await _workspaceCoordinator.ExecuteAsync(new AddWorkspaceTabAction(
-            _windowId,
-            _workspaceCoordinator.Current.Revision,
-            NewTab(tabId, _privacy.IsPrivate) with
-            {
-                Title = "Settings",
-                InternalPage = BrowserInternalPageKind.Settings,
-            },
-            Select: true));
-        if (!added.IsSuccess) return;
-
-        var settings = CreateSettingsTab(tabId);
-        _settingsTabs.Add(tabId, settings);
-        _webSurface.Children.Add(settings);
-        ApplyWorkspaceSnapshot(added.Value!.Snapshot);
+        ApplyWorkspaceSnapshot(opened.Value.Snapshot);
         ShowSelectedHost();
-        await settings.InitializeAsync(_windowLifetime.Token);
+        if (created) await settings!.InitializeAsync(_windowLifetime.Token);
     }
 
     private FoundationSettingsControl CreateSettingsTab(BrowserTabId tabId) => new(
@@ -1499,6 +1485,11 @@ public sealed class FoundationWindow : Window
 
     private void OnFullscreenExitRequested(object? sender, EventArgs args) => ExitFullscreen();
 
+    private void OnWindowMinimizeRequested(object? sender, EventArgs args) => _windowChrome.Minimize();
+    private void OnWindowMaximizeRestoreRequested(object? sender, EventArgs args) => _windowChrome.ToggleMaximizeRestore();
+    private void OnWindowCloseRequested(object? sender, EventArgs args) => _windowChrome.Close();
+    private void OnWindowDragRequested(object? sender, MouseButtonEventArgs args) => _windowChrome.BeginCaptionDrag(args);
+
     private async void OnHostNewTabRequested(object? sender, WebViewNewTabRequestedEventArgs args)
     {
         if (sender is not WebView2HostControl source ||
@@ -1699,14 +1690,14 @@ public sealed class FoundationWindow : Window
             .Where(bookmark => !string.IsNullOrWhiteSpace(bookmark.Note))
             .ToDictionary(bookmark => bookmark.Id, bookmark => bookmark.Note!);
 
-    private static BrowserWorkspacePreferences ToPresentationPreferences(
+    internal static BrowserWorkspacePreferences ToPresentationPreferences(
         WorkspaceUiPreferencesSnapshot snapshot) =>
         new(snapshot.TabStripPlacement switch
         {
             FoundationTabStripPlacement.Left => PresentationTabStripPlacement.Left,
             FoundationTabStripPlacement.Right => PresentationTabStripPlacement.Right,
             _ => PresentationTabStripPlacement.Top,
-        }, snapshot.CollapseToActive, snapshot.ShowOrbitalGroupPreview)
+        }, false, snapshot.ShowOrbitalGroupPreview)
         {
             NewTabMode = snapshot.NewTabMode == WorkspaceNewTabMode.Basic
                 ? NewTabVisualMode.Basic : NewTabVisualMode.Stellar,
@@ -2554,7 +2545,7 @@ public sealed class FoundationWindow : Window
         var tabs = TabStripProjector.Project(
             snapshot.Browser,
             _groupPresentations,
-            _chrome.WorkspacePreferences.CollapseToActive);
+            collapseToActive: false);
         return new RevisionedTabControllerProjection(
             _windowId,
             _privacy.IsPrivate,
@@ -2938,7 +2929,7 @@ public sealed class FoundationWindow : Window
             _privacy,
             _workspacePreferencesRevision,
             ToFoundationPlacement(placement),
-            preferences.CollapseToActive,
+            false,
             preferences.ShowOrbitalGroupPreview,
             _chrome.IsCompactTabMode,
             ToFoundationNewTabMode(preferences.NewTabMode),
@@ -3320,6 +3311,11 @@ public sealed class FoundationWindow : Window
     {
         _chrome.FullscreenExitRequested -= OnFullscreenExitRequested;
         ExitFullscreen();
+        _chrome.WindowMinimizeRequested -= OnWindowMinimizeRequested;
+        _chrome.WindowMaximizeRestoreRequested -= OnWindowMaximizeRestoreRequested;
+        _chrome.WindowCloseRequested -= OnWindowCloseRequested;
+        _chrome.WindowDragRequested -= OnWindowDragRequested;
+        _windowChrome.Dispose();
         Closing -= OnClosing;
         _windowLifetime.Cancel();
     }

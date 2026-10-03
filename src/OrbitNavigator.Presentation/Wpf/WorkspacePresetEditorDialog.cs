@@ -22,6 +22,7 @@ public sealed class WorkspacePresetEditorDialog : Window
 
     public WorkspacePresetEditorDialog(WorkspacePresetPresentation? existing, bool canModify = true)
     {
+        OrbitVisualTheme.ApplyScrollBarTheme(this);
         this.canModify = canModify;
         Title = existing is null ? "Create workspace — Orbit Navigator" : "Edit workspace — Orbit Navigator";
         Width = 760;

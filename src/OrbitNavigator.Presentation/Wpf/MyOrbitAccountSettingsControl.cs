@@ -66,6 +66,7 @@ public sealed class MyOrbitAccountSettingsControl : Grid
 
     public MyOrbitAccountSettingsControl()
     {
+        OrbitVisualTheme.ApplyScrollBarTheme(this);
         AutomationProperties.SetName(this, "My Orbit account settings");
         BuildLayout();
         ApplyTheme();

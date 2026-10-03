@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using OrbitNavigator.App.Accounts;
@@ -227,11 +228,59 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
         panel.Children.Add(updateStatus);
         panel.Children.Add(save);
         panel.Children.Add(status);
+        panel.Children.Add(CreateChangelogSection());
         panel.Children.Add(_account);
         return CreateSettingsScrollSurface(panel);
     }
 
     private Action<PrimaryUpdateSnapshot>? _renderUpdate;
+
+    internal static Expander CreateChangelogSection()
+    {
+        var paragraphs = new StackPanel { Margin = new Thickness(14) };
+        foreach (var block in ReleaseNotesContent.GetDisplayBlocks())
+        {
+            paragraphs.Children.Add(new TextBlock
+            {
+                Text = block.IsBullet ? "\u2022 " + block.Text : block.Text,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = SettingsTextBrush,
+                FontSize = block.IsHeading ? 18 : 14,
+                FontWeight = block.IsHeading ? FontWeights.SemiBold : FontWeights.Normal,
+                Margin = new Thickness(0, block.IsHeading ? 12 : 0, 0, 8),
+            });
+        }
+        var notes = new ScrollViewer
+        {
+            Content = paragraphs,
+            Focusable = true,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            MinHeight = 160,
+            MaxHeight = 360,
+            Background = SettingsBackgroundBrush,
+            Foreground = SettingsTextBrush,
+            BorderBrush = SystemParameters.HighContrast ? SystemColors.WindowTextBrush : OrbitVisualTheme.SeaGlassStrong,
+            BorderThickness = new Thickness(1),
+        };
+        AutomationProperties.SetName(notes, "Orbit Navigator changelog");
+        OrbitVisualTheme.ApplyScrollBarTheme(notes);
+        AutomationProperties.SetHelpText(notes,
+            "Read-only release notes included with this build. Available offline. Unreleased changes are not in the public installer yet.");
+        var section = new Expander
+        {
+            Header = "Changelog — what's new",
+            Content = notes,
+            Foreground = SettingsTextBrush,
+            Background = SettingsBackgroundBrush,
+            Margin = new Thickness(0, 20, 0, 0),
+            MinHeight = 44,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+        };
+        AutomationProperties.SetName(section, "Changelog — what's new");
+        AutomationProperties.SetHelpText(section, "Expand to read the bundled release notes without opening another window.");
+        return section;
+    }
 
     private void OnUpdateSnapshotChanged(object? sender, PrimaryUpdateSnapshot snapshot) =>
         _renderUpdate?.Invoke(snapshot);
@@ -271,6 +320,7 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
         surface.Background = SettingsBackgroundBrush;
         surface.Foreground = SettingsTextBrush;
         surface.FontFamily = new FontFamily("Segoe UI Variable Text, Segoe UI");
+        OrbitVisualTheme.ApplyScrollBarTheme(surface);
     }
 
     internal static void ApplySettingsCheckBoxTheme(CheckBox checkBox)
@@ -295,7 +345,7 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
     internal static ScrollViewer CreateSettingsScrollSurface(FrameworkElement content)
     {
         ArgumentNullException.ThrowIfNull(content);
-        return new ScrollViewer
+        var scroll = new ScrollViewer
         {
             Content = content,
             Background = SettingsBackgroundBrush,
@@ -303,5 +353,7 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
+        OrbitVisualTheme.ApplyScrollBarTheme(scroll);
+        return scroll;
     }
 }

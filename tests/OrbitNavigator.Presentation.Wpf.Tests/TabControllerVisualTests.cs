@@ -158,6 +158,40 @@ public sealed class TabControllerVisualTests
     });
 
     [Fact]
+    public void CompactTopTabsStayFixedWidthAfterViewportWheelNavigation() => StaTest.Run(() =>
+    {
+        var control = new TabControllerControl();
+        control.Bind(Session(TabStripPlacement.Top, 40));
+        control.ApplyCompactMode(true);
+        var window = new Window { Content = control, Width = 640, Height = 90, ShowInTaskbar = false };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            var before = StaTest.Descendants(control).OfType<Button>()
+                .First(button => button.Tag is BrowserTabEntry);
+            var beforeCard = Assert.IsType<Grid>(VisualTreeHelper.GetParent(before));
+            Assert.InRange(beforeCard.ActualWidth, 87, 89);
+
+            control.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, 120)
+            {
+                RoutedEvent = Mouse.PreviewMouseWheelEvent,
+                Source = control,
+            });
+            control.UpdateLayout();
+
+            var after = StaTest.Descendants(control).OfType<Button>()
+                .First(button => button.Tag is BrowserTabEntry);
+            var afterCard = Assert.IsType<Grid>(VisualTreeHelper.GetParent(after));
+            Assert.InRange(afterCard.ActualWidth, 87, 89);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
     public void TabGroupUsesEmberStatusWithoutReplacingActionSemantics() => StaTest.Run(() =>
     {
         var windowId = new BrowserWindowId(Guid.NewGuid());
@@ -1009,6 +1043,9 @@ public sealed class TabControllerVisualTests
                 .StartsWith("Close tab — Selected tab", StringComparison.Ordinal));
         Assert.True(selected.ActualWidth >= 44 && selected.ActualHeight >= 44);
         Assert.True(close.ActualWidth >= 44 && close.ActualHeight >= 44);
+        var card = Assert.IsType<Grid>(VisualTreeHelper.GetParent(selected));
+        Assert.InRange(card.ActualWidth, 87, 89);
+        Assert.Equal(44, card.ActualHeight);
         Assert.DoesNotContain(
             StaTest.Descendants(selected).OfType<TextBlock>(),
             text => text.Text.StartsWith("Selected tab", StringComparison.Ordinal));

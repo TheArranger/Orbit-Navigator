@@ -31,6 +31,14 @@ public sealed class QuickViewControl : Grid
         StaysOpen = true,
         PopupAnimation = PopupAnimation.None,
     };
+    private readonly Popup launcherPopup = new()
+    {
+        AllowsTransparency = true,
+        Placement = PlacementMode.Custom,
+        StaysOpen = true,
+        PopupAnimation = PopupAnimation.None,
+    };
+    private Popup activePopup;
     private readonly ContentPresenter webContent = new();
     private readonly TextBox search = new()
     {
@@ -61,14 +69,17 @@ public sealed class QuickViewControl : Grid
     private double widthRatio = InitialWidthRatio;
     private double heightRatio = InitialHeightRatio;
     private bool imeSubmitQueued;
+    private bool isOverlaySuppressed;
 
     public QuickViewControl()
     {
+        activePopup = launcherPopup;
         HorizontalAlignment = HorizontalAlignment.Stretch;
         VerticalAlignment = VerticalAlignment.Stretch;
         Background = null;
         Focusable = false;
         AutomationProperties.SetName(this, "Quick View");
+        OrbitVisualTheme.ApplyScrollBarTheme(overlayLayout);
 
         anchor = CreateIconButton(OrbitIconKind.Search, "Submit Quick View search or address");
         anchor.MinWidth = LauncherButtonSize;
@@ -81,12 +92,25 @@ public sealed class QuickViewControl : Grid
         anchor.GotKeyboardFocus += (_, _) => ExpandSearch();
         expand = TextButton("Expand to normal tab", RequestExpand);
         close = TextButton("Close Quick View", RequestClose);
+        OrbitVisualTheme.ApplyTextBox(search);
         surface = BuildSurface();
         BuildLayout();
-        overlayPopup.PlacementTarget = this;
-        overlayPopup.CustomPopupPlacementCallback = PlaceOverlayAtLowerRight;
+        foreach (var popup in new[] { launcherPopup, overlayPopup })
+        {
+            popup.PlacementTarget = this;
+            popup.CustomPopupPlacementCallback = PlaceOverlayAtLowerRight;
+            popup.Opened += (_, _) =>
+            {
+                if (isOverlaySuppressed || !presentation.CanShowAnchor || !ReferenceEquals(popup, activePopup))
+                    popup.IsOpen = false;
+            };
+        }
         Loaded += (_, _) => RefreshOverlayPopup();
-        Unloaded += (_, _) => overlayPopup.IsOpen = false;
+        Unloaded += (_, _) =>
+        {
+            launcherPopup.IsOpen = false;
+            overlayPopup.IsOpen = false;
+        };
         SizeChanged += (_, _) => RefreshOverlayPlacement();
         Apply(presentation);
     }
@@ -104,12 +128,30 @@ public sealed class QuickViewControl : Grid
     public Button AnchorButton => anchor;
     public Border LauncherSurface => launcher;
     public TextBox SearchBox => search;
-    public Popup OverlayPopup => overlayPopup;
+    public Popup OverlayPopup => activePopup;
+
+    public bool IsOverlaySuppressed
+    {
+        get => isOverlaySuppressed;
+        set
+        {
+            if (isOverlaySuppressed == value) return;
+            isOverlaySuppressed = value;
+            RefreshOverlayPopup();
+        }
+    }
 
     public UIElement? WebContent
     {
         get => webContent.Content as UIElement;
-        set => webContent.Content = value;
+        set
+        {
+            // Select the permanently opaque HWND before attaching any browser
+            // content, even when a caller sets content before the Opening state.
+            if (value is not null) EnsurePopupMode(transparent: false);
+            webContent.Content = value;
+            RefreshOverlayPopup();
+        }
     }
 
     public void Apply(QuickViewPresentation state)
@@ -117,18 +159,20 @@ public sealed class QuickViewControl : Grid
         var previousHostState = presentation.HostState;
         var previousAddress = presentation.Address;
         presentation = (state ?? throw new ArgumentNullException(nameof(state))).Validate();
-        if (presentation.HostState is QuickViewHostState.Ready or QuickViewHostState.Unavailable &&
-            previousHostState is QuickViewHostState.Opening or QuickViewHostState.Open or
-                QuickViewHostState.Closing or QuickViewHostState.Failed)
-        {
-            ResetForFreshUse();
-        }
         anchor.Visibility = presentation.CanShowAnchor ? Visibility.Visible : Visibility.Collapsed;
         surface.Visibility = presentation.CanShowAnchor &&
             presentation.HostState is QuickViewHostState.Opening or QuickViewHostState.Open or
                 QuickViewHostState.Closing or QuickViewHostState.Failed
             ? Visibility.Visible
             : Visibility.Collapsed;
+        if (presentation.HostState is QuickViewHostState.Ready or QuickViewHostState.Unavailable &&
+            previousHostState is QuickViewHostState.Opening or QuickViewHostState.Open or
+                QuickViewHostState.Closing or QuickViewHostState.Failed)
+        {
+            // Reset can transfer the empty layout back to its transparent popup.
+            // Collapse the outgoing browser surface before that HWND measures it.
+            ResetForFreshUse();
+        }
         if (!presentation.CanShowAnchor)
         {
             search.Visibility = Visibility.Collapsed;
@@ -185,20 +229,16 @@ public sealed class QuickViewControl : Grid
     {
         overlayLayout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         overlayLayout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        // The popup must remain opaque so its hosted browser HWND renders
-        // correctly; each visible launcher/surface then provides the shape.
-        overlayLayout.Background = SystemParameters.HighContrast
-            ? SystemColors.WindowBrush
-            : OrbitVisualTheme.Canvas;
+        overlayLayout.Background = Brushes.Transparent;
         overlayLayout.Children.Add(surface);
         AutomationProperties.SetName(submitFeedback, "Quick View navigation status");
         AutomationProperties.SetLiveSetting(submitFeedback, AutomationLiveSetting.Polite);
         overlayLayout.Children.Add(submitFeedback);
 
-        launcher.BorderBrush = SystemParameters.HighContrast ? SystemColors.ControlTextBrush : OrbitVisualTheme.WaypointGold;
-        launcher.BorderThickness = new Thickness(2);
+        launcher.BorderBrush = SystemParameters.HighContrast ? SystemColors.ControlTextBrush : OrbitVisualTheme.Divider;
+        launcher.BorderThickness = new Thickness(1);
         launcher.CornerRadius = new CornerRadius(26);
-        launcher.Padding = new Thickness(3);
+        launcher.Padding = new Thickness(2);
         launcher.Margin = new Thickness(0, LauncherGap, 0, 0);
         launcher.HorizontalAlignment = HorizontalAlignment.Right;
         launcher.UseLayoutRounding = true;
@@ -228,7 +268,8 @@ public sealed class QuickViewControl : Grid
         };
         Grid.SetRow(launcher, 1);
         overlayLayout.Children.Add(launcher);
-        overlayPopup.Child = overlayLayout;
+        activePopup.Child = overlayLayout;
+        Children.Add(launcherPopup);
         Children.Add(overlayPopup);
     }
 
@@ -249,25 +290,65 @@ public sealed class QuickViewControl : Grid
 
     private void RefreshOverlayPopup()
     {
-        overlayPopup.IsOpen = IsLoaded && presentation.CanShowAnchor;
-        if (overlayPopup.IsOpen)
+        var needsOpaqueHost = WebContent is not null ||
+            presentation.HostState is QuickViewHostState.Opening or QuickViewHostState.Open or
+                QuickViewHostState.Closing or QuickViewHostState.Failed;
+        EnsurePopupMode(transparent: !needsOpaqueHost);
+        activePopup.IsOpen = !isOverlaySuppressed && IsLoaded && presentation.CanShowAnchor;
+        if (activePopup.IsOpen)
         {
             RefreshOverlayPlacement();
         }
     }
 
+    private void EnsurePopupMode(bool transparent)
+    {
+        // Popup HWND destruction is deferred by WPF, so toggling AllowsTransparency
+        // on a close/reopen can reuse the wrong native window. Fixed-mode popups
+        // avoid that race. Only the empty layout moves; a live host never does.
+        transparent &= WebContent is null;
+        var next = transparent ? launcherPopup : overlayPopup;
+        if (!ReferenceEquals(activePopup, next))
+        {
+            var restoreSearchFocus = search.IsKeyboardFocusWithin;
+            var restoreAnchorFocus = anchor.IsKeyboardFocusWithin;
+            var searchWasExpanded = search.Visibility == Visibility.Visible;
+            activePopup.IsOpen = false;
+            activePopup.Child = null;
+            activePopup = next;
+            activePopup.Child = overlayLayout;
+            // Invalidation queued in the old popup may be lost when its child is
+            // detached. Remeasure the launcher in the new presentation source.
+            launcher.Child?.InvalidateMeasure();
+            launcher.InvalidateMeasure();
+            overlayLayout.InvalidateMeasure();
+            if (searchWasExpanded) search.Visibility = Visibility.Visible;
+            if ((restoreSearchFocus || restoreAnchorFocus) && IsLoaded)
+            {
+                _ = Dispatcher.InvokeAsync(() =>
+                {
+                    if (!ReferenceEquals(activePopup, next) || !activePopup.IsOpen || isOverlaySuppressed) return;
+                    if (restoreSearchFocus) search.Focus();
+                    else anchor.Focus();
+                }, DispatcherPriority.Input);
+            }
+        }
+        overlayLayout.Background = transparent ? Brushes.Transparent
+            : SystemParameters.HighContrast ? SystemColors.WindowBrush : OrbitVisualTheme.Canvas;
+    }
+
     private void RefreshOverlayPlacement()
     {
-        if (!overlayPopup.IsOpen)
+        if (!activePopup.IsOpen)
         {
             return;
         }
 
         // WPF has no public Popup.Reposition API. A sub-pixel offset nudge asks
         // the native popup to rerun its custom placement without visible motion.
-        var offset = overlayPopup.HorizontalOffset;
-        overlayPopup.HorizontalOffset = offset + 0.01;
-        overlayPopup.HorizontalOffset = offset;
+        var offset = activePopup.HorizontalOffset;
+        activePopup.HorizontalOffset = offset + 0.01;
+        activePopup.HorizontalOffset = offset;
     }
 
     private Border BuildSurface()
@@ -532,14 +613,14 @@ public sealed class QuickViewControl : Grid
 
         launcher.Background = new LinearGradientBrush(
             emphasized
-                ? Color.FromArgb(250, 5, 16, 22)
-                : Color.FromArgb(186, 12, 29, 36),
+                ? Color.FromArgb(238, 5, 16, 22)
+                : Color.FromArgb(112, 12, 29, 36),
             emphasized
-                ? Color.FromArgb(250, 10, 28, 34)
-                : Color.FromArgb(186, 22, 48, 52),
+                ? Color.FromArgb(238, 10, 28, 34)
+                : Color.FromArgb(112, 22, 48, 52),
             new Point(0, 0),
             new Point(1, 1));
-        launcher.BorderBrush = emphasized ? OrbitVisualTheme.SeaGlassStrong : OrbitVisualTheme.WaypointGold;
+        launcher.BorderBrush = emphasized ? OrbitVisualTheme.SeaGlassStrong : OrbitVisualTheme.Divider;
     }
 
     private Button TextButton(string label, Action action)

@@ -7,6 +7,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Shell;
 
 using OrbitNavigator.Contracts.Browser;
 using OrbitNavigator.Contracts.Common;
@@ -67,10 +68,19 @@ public sealed class BrowserChromeControl : Grid
     private readonly Border toolbarSurface = OrbitVisualTheme.CreateSurface(12);
     private readonly TextBox omnibox = new()
     {
-        MinWidth = 240,
-        Height = 40,
-        Margin = new Thickness(6, 4, 6, 4),
+        MinWidth = 120,
+        Height = 44,
+        Margin = new Thickness(4, 2, 4, 2),
         VerticalContentAlignment = VerticalAlignment.Center,
+    };
+    private readonly Grid omniboxHost = new();
+    private readonly TextBlock omniboxPlaceholder = new()
+    {
+        Text = "Search or enter address",
+        Margin = new Thickness(18, 0, 8, 0),
+        VerticalAlignment = VerticalAlignment.Center,
+        IsHitTestVisible = false,
+        Focusable = false,
     };
     private readonly Border privateIndicator = new()
     {
@@ -127,11 +137,28 @@ public sealed class BrowserChromeControl : Grid
     private readonly Button reloadButton;
     private readonly Button homeButton;
     private readonly Button privateWindowButton;
-    private readonly Button collapseModeButton;
     private readonly Button compactTabsButton;
     private readonly Button tabLayoutButton;
     private readonly Button affiliatedRailButton;
     private readonly Button showTabsButton;
+    private readonly Button browserMenuButton;
+    private readonly Grid windowCaptionHost = new()
+    {
+        Width = CaptionHostWidth,
+        Height = 48,
+        HorizontalAlignment = HorizontalAlignment.Right,
+        VerticalAlignment = VerticalAlignment.Center,
+        Margin = new Thickness(0, 0, 8, 0),
+    };
+    private readonly Border windowDragRegion = new()
+    {
+        MinWidth = 64,
+        Background = Brushes.Transparent,
+        Cursor = Cursors.Arrow,
+    };
+    private readonly Button windowMinimizeButton;
+    private readonly Button windowMaximizeRestoreButton;
+    private readonly Button windowCloseButton;
 
     private BrowserState? browserState;
     private TabStripViewState? tabStrip;
@@ -152,6 +179,7 @@ public sealed class BrowserChromeControl : Grid
     private bool reducedMotion;
     private bool compactTabMode;
     private bool isFullscreen;
+    private bool isWindowMaximized;
     private double windowedMinimumHeight;
     private BrowserWorkspacePreferences workspacePreferences = BrowserWorkspacePreferences.Default;
     private Func<WorkspaceLocalArtworkImportRequest, WorkspaceArtworkPresentation?>? workspaceLocalArtworkImporter;
@@ -164,21 +192,20 @@ public sealed class BrowserChromeControl : Grid
     private OfflineReadingCatalogPresentation offlineReading =
         OfflineReadingCatalogPresentation.Unavailable(false, "Offline reading is not connected.");
 
+    public const double CaptionHostWidth = 210;
+
     public BrowserChromeControl()
     {
         MinHeight = 104;
         Focusable = true;
         AutomationProperties.SetName(this, "Orbit Navigator browser chrome");
+        OrbitVisualTheme.ApplyScrollBarTheme(this);
 
         backButton = CreateNavigationButton("\u2190", "Go back", RequestBack);
         forwardButton = CreateNavigationButton("\u2192", "Go forward", RequestForward);
         reloadButton = CreateNavigationButton("\u21bb", "Reload page", RequestReloadOrStop);
         homeButton = CreateNavigationButton("Home", "Go to home page", RequestHome);
         privateWindowButton = CreateNavigationButton("Private +", "New private window", RequestPrivateWindow);
-        collapseModeButton = CreateNavigationButton(
-            IconLabel(OrbitIconKind.ChevronRight, "Condense inactive tabs"),
-            "Condense inactive tabs",
-            ToggleCollapseToActive);
         compactTabsButton = CreateNavigationButton(
             "Compact tabs",
             "Use compact favicon-only tabs",
@@ -197,6 +224,16 @@ public sealed class BrowserChromeControl : Grid
         AutomationProperties.SetHelpText(
             showTabsButton,
             "Activates the detached tab controller without changing or moving any tabs.");
+        browserMenuButton = CreateNavigationButton(
+            Icon(OrbitIconKind.Menu, 19),
+            "Open browser menu",
+            () => OpenBrowserMenu(browserMenuButton!));
+        windowMinimizeButton = CreateCaptionButton("\u2014", "Minimize window", () =>
+            WindowMinimizeRequested?.Invoke(this, EventArgs.Empty));
+        windowMaximizeRestoreButton = CreateCaptionButton("\u25a1", "Maximize window", () =>
+            WindowMaximizeRestoreRequested?.Invoke(this, EventArgs.Empty));
+        windowCloseButton = CreateCaptionButton("\u00d7", "Close window", () =>
+            WindowCloseRequested?.Invoke(this, EventArgs.Empty), destructive: true);
 
         backButton.Content = Icon(OrbitIconKind.Back, 19);
         forwardButton.Content = Icon(OrbitIconKind.Forward, 19);
@@ -219,6 +256,7 @@ public sealed class BrowserChromeControl : Grid
                 Math.Max(1, contentHost.ActualWidth),
                 Math.Max(1, contentHost.ActualHeight)));
             UpdatePermissionSurfaceBounds();
+            UpdateResponsiveToolbar();
         };
         ApplyPalette();
         PreviewKeyDown += OnPreviewKeyDown;
@@ -262,6 +300,14 @@ public sealed class BrowserChromeControl : Grid
     public event EventHandler? FullscreenExitRequested;
 
     public event EventHandler<ResourceMonitorRequestedEventArgs>? ResourceMonitorRequested;
+
+    public event EventHandler? WindowMinimizeRequested;
+
+    public event EventHandler? WindowMaximizeRestoreRequested;
+
+    public event EventHandler? WindowCloseRequested;
+
+    public event EventHandler<MouseButtonEventArgs>? WindowDragRequested;
 
     public event EventHandler<CompactTabModeChangeRequestedEventArgs>? CompactTabModeChangeRequested
     {
@@ -316,11 +362,15 @@ public sealed class BrowserChromeControl : Grid
 
     public bool IsFullscreen => isFullscreen;
 
-    public bool IsAddressBarVisible => omnibox.Visibility == Visibility.Visible;
+    public bool IsAddressBarVisible => omniboxHost.Visibility == Visibility.Visible;
+
+    public bool IsWindowMaximized => isWindowMaximized;
 
     public GridSplitter SideTabPanelResizeHandle => sideTabPanelResizeHandle;
 
     public QuickViewControl QuickView => quickView;
+
+    public FrameworkElement WindowCaptionHost => windowCaptionHost;
 
     /// <summary>
     /// Host-owned safe local artwork importer shared by the docked controller and
@@ -418,6 +468,7 @@ public sealed class BrowserChromeControl : Grid
         }
 
         isFullscreen = enabled;
+        quickView.IsOverlaySuppressed = enabled;
         ApplyTabStripPlacement();
         quickView.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
         quickView.OverlayPopup.IsOpen = !enabled && quickView.IsLoaded &&
@@ -426,6 +477,19 @@ public sealed class BrowserChromeControl : Grid
         {
             FullscreenExitRequested?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    public void ApplyWindowState(bool isMaximized)
+    {
+        isWindowMaximized = isMaximized;
+        windowMaximizeRestoreButton.Content = CaptionGlyph(isMaximized ? "\u2750" : "\u25a1", 16);
+        windowMaximizeRestoreButton.ToolTip = isMaximized ? "Restore window" : "Maximize window";
+        AutomationProperties.SetName(
+            windowMaximizeRestoreButton,
+            isMaximized ? "Restore window" : "Maximize window");
+        AutomationProperties.SetHelpText(
+            windowMaximizeRestoreButton,
+            isMaximized ? "Restore the browser window to its previous size." : "Maximize the browser window.");
     }
 
     /// <summary>
@@ -636,11 +700,16 @@ public sealed class BrowserChromeControl : Grid
 
     public void ApplyWorkspacePreferences(BrowserWorkspacePreferences preferences)
     {
-        var next = (preferences ?? throw new ArgumentNullException(nameof(preferences))).Validate();
+        var next = (preferences ?? throw new ArgumentNullException(nameof(preferences))).Validate() with
+        {
+            // Retained only for profile-schema compatibility. There is now one
+            // explicit compact-mode control instead of two competing density modes.
+            CollapseToActive = false,
+        };
         var previous = workspacePreferences;
         var focusTarget = CaptureTabStripFocus();
         workspacePreferences = next;
-        omnibox.Visibility = next.ShowAddressBar ? Visibility.Visible : Visibility.Collapsed;
+        omniboxHost.Visibility = next.ShowAddressBar ? Visibility.Visible : Visibility.Collapsed;
         ApplyTabStripPlacement();
         dockedTabController?.ApplyLayoutPlacement(next.TabStripPlacement);
         UpdateWorkspacePreferenceControls();
@@ -670,7 +739,9 @@ public sealed class BrowserChromeControl : Grid
         {
             tabInteractions.Remove(staleTabId);
         }
-        tabStrip = TabStripProjector.Project(state, groups, workspacePreferences.CollapseToActive);
+        // Keep the durable compatibility preference readable, but do not let an
+        // older profile silently re-enable the retired inactive-tab collapse UI.
+        tabStrip = TabStripProjector.Project(state, groups, collapseToActive: false);
         tabRow.Children.Clear();
         tabButtons.Clear();
         tabContainers.Clear();
@@ -765,9 +836,6 @@ public sealed class BrowserChromeControl : Grid
 
         switch (key)
         {
-            case Key.C:
-                ToggleCollapseToActive();
-                return true;
             case Key.F:
                 RequestCompactTabModeChange();
                 return true;
@@ -838,37 +906,32 @@ public sealed class BrowserChromeControl : Grid
         AddToolbarLeft(forwardButton);
         AddToolbarLeft(reloadButton);
         AddToolbarLeft(homeButton);
-        AddToolbarLeft(privateWindowButton);
 
-        Button? menuButton = null;
-        menuButton = CreateNavigationButton(
-            Icon(OrbitIconKind.Menu, 19),
-            "Open browser menu",
-            () => OpenBrowserMenu(menuButton!));
-        DockPanel.SetDock(menuButton, Dock.Right);
-        toolbar.Children.Add(menuButton);
+        DockPanel.SetDock(browserMenuButton, Dock.Right);
+        toolbar.Children.Add(browserMenuButton);
         DockPanel.SetDock(showTabsButton, Dock.Right);
         toolbar.Children.Add(showTabsButton);
         DockPanel.SetDock(tabLayoutButton, Dock.Right);
         toolbar.Children.Add(tabLayoutButton);
-        DockPanel.SetDock(affiliatedRailButton, Dock.Right);
-        toolbar.Children.Add(affiliatedRailButton);
-        DockPanel.SetDock(compactTabsButton, Dock.Right);
-        toolbar.Children.Add(compactTabsButton);
-        DockPanel.SetDock(collapseModeButton, Dock.Right);
-        toolbar.Children.Add(collapseModeButton);
-        AutomationProperties.SetHelpText(
-            collapseModeButton,
-            "Condenses inactive tabs to save space. Keyboard shortcut: Alt+Shift+C.");
         privateIndicator.Child = privateIndicatorText;
         DockPanel.SetDock(privateIndicator, Dock.Right);
         toolbar.Children.Add(privateIndicator);
 
         omnibox.KeyDown += OnOmniboxKeyDown;
+        omnibox.TextChanged += (_, _) => UpdateOmniboxPlaceholder();
+        omnibox.GotKeyboardFocus += (_, _) => UpdateOmniboxPlaceholder();
+        omnibox.LostKeyboardFocus += (_, _) => UpdateOmniboxPlaceholder();
         AutomationProperties.SetName(omnibox, "Address and search");
         AutomationProperties.SetHelpText(omnibox, "Enter a web address or search with DuckDuckGo.");
-        toolbar.Children.Add(omnibox);
+        omniboxHost.Children.Add(omnibox);
+        omniboxHost.Children.Add(omniboxPlaceholder);
+        toolbar.Children.Add(omniboxHost);
+        UpdateOmniboxPlaceholder();
         Children.Add(toolbarSurface);
+
+        BuildWindowCaptionHost();
+        Panel.SetZIndex(windowCaptionHost, 70);
+        Children.Add(windowCaptionHost);
 
         permissionScroller.Content = permissionLayout;
         permissionSurface.Child = permissionScroller;
@@ -893,12 +956,67 @@ public sealed class BrowserChromeControl : Grid
         ApplyTabStripPlacement();
         UpdateWorkspacePreferenceControls();
         UpdateCompactTabModeControl();
+        UpdateResponsiveToolbar();
     }
 
     private void AddToolbarLeft(Button button)
     {
         DockPanel.SetDock(button, Dock.Left);
         toolbar.Children.Add(button);
+    }
+
+    private void UpdateResponsiveToolbar()
+    {
+        // Preserve the address field first in snapped/narrow windows. These
+        // commands remain available from the browser menu and shortcuts.
+        homeButton.Visibility = ActualWidth <= 0 || ActualWidth >= 700
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        tabLayoutButton.Visibility = ActualWidth <= 0 || ActualWidth >= 760
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        privateIndicatorText.Text = ActualWidth > 0 && ActualWidth < 760
+            ? "Private"
+            : "Private window";
+        privateIndicator.Padding = ActualWidth > 0 && ActualWidth < 760
+            ? new Thickness(6, 4, 6, 4)
+            : new Thickness(10, 4, 10, 4);
+    }
+
+    private void BuildWindowCaptionHost()
+    {
+        windowCaptionHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        windowCaptionHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(46) });
+        windowCaptionHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(46) });
+        windowCaptionHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(46) });
+        WindowChrome.SetIsHitTestVisibleInChrome(windowCaptionHost, true);
+        WindowChrome.SetIsHitTestVisibleInChrome(windowDragRegion, true);
+        AutomationProperties.SetName(windowDragRegion, "Move window");
+        AutomationProperties.SetHelpText(
+            windowDragRegion,
+            "Drag to move or snap the browser window. Double-click to maximize or restore it.");
+        windowDragRegion.PreviewMouseLeftButtonDown += (_, args) =>
+        {
+            if (args.ClickCount >= 2)
+            {
+                WindowMaximizeRestoreRequested?.Invoke(this, EventArgs.Empty);
+                args.Handled = true;
+                return;
+            }
+
+            WindowDragRequested?.Invoke(this, args);
+        };
+        windowCaptionHost.Children.Add(windowDragRegion);
+        AddCaptionButton(windowMinimizeButton, 1);
+        AddCaptionButton(windowMaximizeRestoreButton, 2);
+        AddCaptionButton(windowCloseButton, 3);
+    }
+
+    private void AddCaptionButton(Button button, int column)
+    {
+        Grid.SetColumn(button, column);
+        WindowChrome.SetIsHitTestVisibleInChrome(button, true);
+        windowCaptionHost.Children.Add(button);
     }
 
     private void ApplyTabStripPlacement()
@@ -918,6 +1036,7 @@ public sealed class BrowserChromeControl : Grid
             : Visibility.Collapsed;
         if (isFullscreen)
         {
+            windowCaptionHost.Visibility = Visibility.Collapsed;
             sideTabPanelResizeHandle.Visibility = Visibility.Collapsed;
             foreach (var column in ColumnDefinitions)
             {
@@ -936,6 +1055,7 @@ public sealed class BrowserChromeControl : Grid
             UpdatePermissionSurfaceBounds();
             return;
         }
+        windowCaptionHost.Visibility = Visibility.Visible;
         tabRow.Orientation = isVertical ? Orientation.Vertical : Orientation.Horizontal;
         // The reusable controller owns overflow with reserved controls. The
         // legacy fallback is clipped and never draws a scrollbar over tabs.
@@ -946,6 +1066,8 @@ public sealed class BrowserChromeControl : Grid
         if (!isVertical)
         {
             sideTabPanelResizeHandle.Visibility = Visibility.Collapsed;
+            Grid.SetRow(sideTabPanelResizeHandle, 0);
+            Grid.SetRowSpan(sideTabPanelResizeHandle, 4);
             ColumnDefinitions[0].MinWidth = 0;
             ColumnDefinitions[0].MaxWidth = double.PositiveInfinity;
             ColumnDefinitions[1].MinWidth = 0;
@@ -964,7 +1086,14 @@ public sealed class BrowserChromeControl : Grid
             Place(statusAnnouncer, 2, 0, 1, 2);
             Place(contentHost, 3, 0, 1, 2);
             Place(quickView, 3, 0, 1, 2);
-            tabSurface.Margin = new Thickness(8, 5, 8, 1);
+            var captionOnToolbar = controllerSuppressed;
+            Place(windowCaptionHost, captionOnToolbar ? 1 : 0, 0, 1, 2);
+            tabSurface.Margin = captionOnToolbar
+                ? new Thickness(8, 5, 8, 1)
+                : new Thickness(8, 5, CaptionHostWidth + 8, 1);
+            toolbarSurface.Margin = captionOnToolbar
+                ? new Thickness(8, 3, CaptionHostWidth + 8, 5)
+                : new Thickness(8, 3, 8, 5);
             tabSurface.Padding = new Thickness(4, 0, 4, 0);
             UpdatePermissionSurfaceBounds();
             return;
@@ -990,12 +1119,15 @@ public sealed class BrowserChromeControl : Grid
         RowDefinitions[1].Height = GridLength.Auto;
         RowDefinitions[2].Height = new GridLength(1, GridUnitType.Star);
         RowDefinitions[3].Height = new GridLength(0);
-        Place(tabSurface, 0, tabColumn, 4, 1);
-        Place(toolbarSurface, 0, contentColumn);
+        Place(tabSurface, 1, tabColumn, 3, 1);
+        Place(toolbarSurface, 0, 0, 1, 2);
+        Place(windowCaptionHost, 0, 0, 1, 2);
         Place(permissionSurface, 2, contentColumn, 2, 1);
         Place(statusAnnouncer, 1, contentColumn);
         Place(contentHost, 2, contentColumn, 2, 1);
         Place(quickView, 2, contentColumn, 2, 1);
+        Grid.SetRow(sideTabPanelResizeHandle, 1);
+        Grid.SetRowSpan(sideTabPanelResizeHandle, 3);
         Grid.SetColumn(sideTabPanelResizeHandle, tabColumn);
         sideTabPanelResizeHandle.HorizontalAlignment = placement == TabStripPlacement.Left
             ? HorizontalAlignment.Right
@@ -1010,6 +1142,7 @@ public sealed class BrowserChromeControl : Grid
             ? new Thickness(8, 6, 10, 8)
             : new Thickness(10, 6, 8, 8);
         tabSurface.Padding = new Thickness(4);
+        toolbarSurface.Margin = new Thickness(8, 3, CaptionHostWidth + 8, 5);
         UpdatePermissionSurfaceBounds();
     }
 
@@ -1256,7 +1389,6 @@ public sealed class BrowserChromeControl : Grid
     private void UpdateWorkspacePreferenceControls()
     {
         var canPersist = workspacePreferencesChanged is not null;
-        collapseModeButton.IsEnabled = canPersist;
         tabLayoutButton.IsEnabled = canPersist && !tabPlacementTransitionInProgress;
         affiliatedRailButton.IsEnabled = canPersist;
         var placement = workspacePreferences.TabStripPlacement;
@@ -1265,30 +1397,6 @@ public sealed class BrowserChromeControl : Grid
         tabLayoutButton.ToolTip = "Change tab placement";
         AutomationProperties.SetName(tabLayoutButton, "Change tab placement");
         AutomationProperties.SetItemStatus(tabLayoutButton, $"Tabs: {placementLabel}");
-        var collapseActionLabel = workspacePreferences.CollapseToActive
-            ? "Expand inactive tabs"
-            : "Condense inactive tabs";
-        collapseModeButton.Content = IconLabel(
-            workspacePreferences.CollapseToActive ? OrbitIconKind.ChevronDown : OrbitIconKind.ChevronRight,
-            collapseActionLabel);
-        collapseModeButton.ToolTip = canPersist
-            ? workspacePreferences.CollapseToActive
-                ? "Restore full titles for inactive tabs (Alt+Shift+C)"
-                : "Condense inactive tabs to save space (Alt+Shift+C)"
-            : "Tab layout preferences are unavailable until the profile is ready.";
-        AutomationProperties.SetName(
-            collapseModeButton,
-            collapseActionLabel);
-        AutomationProperties.SetItemStatus(
-            collapseModeButton,
-            workspacePreferences.CollapseToActive ? "On" : "Off");
-        AutomationProperties.SetHelpText(
-            collapseModeButton,
-            canPersist
-                ? workspacePreferences.CollapseToActive
-                    ? "Restores full titles for inactive tabs. Keyboard shortcut: Alt+Shift+C."
-                    : "Condenses inactive tabs to save space. Keyboard shortcut: Alt+Shift+C."
-                : "Tab layout preferences are unavailable until the profile is ready.");
         AutomationProperties.SetHelpText(
             tabLayoutButton,
             tabPlacementTransitionInProgress
@@ -1344,9 +1452,6 @@ public sealed class BrowserChromeControl : Grid
         compactTabModeChangeRequested.Invoke(this, new(!compactTabMode));
         Announce(compactTabMode ? "Requesting tab titles." : "Requesting compact favicon-only tabs.");
     }
-
-    private void ToggleCollapseToActive() => RequestWorkspacePreferenceChange(
-        workspacePreferences with { CollapseToActive = !workspacePreferences.CollapseToActive });
 
     private void ToggleAffiliatedRail() => RequestWorkspacePreferenceChange(
         workspacePreferences with { ShowAffiliatedRail = !workspacePreferences.ShowAffiliatedRail });
@@ -1625,14 +1730,15 @@ public sealed class BrowserChromeControl : Grid
 
     private void AddTab(BrowserTabEntry tab)
     {
+        var dense = tab.IsCompact;
         var select = new Button
         {
             Content = CreateTabContent(tab),
-            Margin = new Thickness(2),
+            Margin = dense ? new Thickness(1) : new Thickness(2),
             MinHeight = 44,
-            MinWidth = tab.IsCompact ? 44 : 96,
-            MaxWidth = tab.IsCompact ? 44 : 240,
-            Padding = tab.IsCompact ? new Thickness(8, 2, 8, 2) : new Thickness(10, 2, 10, 2),
+            MinWidth = dense ? 44 : 96,
+            MaxWidth = dense ? 44 : 240,
+            Padding = dense ? new Thickness(6, 2, 6, 2) : new Thickness(10, 2, 10, 2),
             ToolTip = tab.Address?.AbsoluteUri ?? tab.Title,
             AllowDrop = true,
         };
@@ -1661,9 +1767,8 @@ public sealed class BrowserChromeControl : Grid
             Content = Icon(OrbitIconKind.Close, 15),
             Margin = new Thickness(0, 2, 2, 2),
             MinHeight = 44,
-            MinWidth = 40,
+            MinWidth = 44,
             ToolTip = $"Close {tab.Title}",
-            Visibility = tab.IsCompact ? Visibility.Collapsed : Visibility.Visible,
         };
         OrbitVisualTheme.ApplyButton(close, OrbitButtonRole.Quiet);
         AutomationProperties.SetName(close, $"Close {tab.Title}");
@@ -1681,9 +1786,9 @@ public sealed class BrowserChromeControl : Grid
         var button = new Button
         {
             Content = content,
-            Margin = new Thickness(3, 4, 3, 4),
+            Margin = new Thickness(2, 4, 2, 4),
             MinWidth = 44,
-            MinHeight = 40,
+            MinHeight = 44,
             ToolTip = automationName,
         };
         OrbitVisualTheme.ApplyButton(button, OrbitButtonRole.Toolbar);
@@ -1691,6 +1796,36 @@ public sealed class BrowserChromeControl : Grid
         button.Click += (_, _) => action();
         return button;
     }
+
+    private Button CreateCaptionButton(string glyph, string automationName, Action action, bool destructive = false)
+    {
+        var button = new Button
+        {
+            Content = CaptionGlyph(glyph, glyph == "\u00d7" ? 22 : 16),
+            Width = 46,
+            Height = 44,
+            MinWidth = 46,
+            MinHeight = 44,
+            Padding = new Thickness(0),
+            Margin = new Thickness(0),
+            ToolTip = automationName,
+        };
+        if (destructive) OrbitVisualTheme.ApplyCaptionCloseButton(button);
+        else OrbitVisualTheme.ApplyButton(button, OrbitButtonRole.Toolbar);
+        AutomationProperties.SetName(button, automationName);
+        AutomationProperties.SetHelpText(button, automationName);
+        button.Click += (_, _) => action();
+        return button;
+    }
+
+    private static TextBlock CaptionGlyph(string glyph, double size) => new()
+    {
+        Text = glyph,
+        FontFamily = new FontFamily("Segoe UI Symbol"),
+        FontSize = size,
+        VerticalAlignment = VerticalAlignment.Center,
+        HorizontalAlignment = HorizontalAlignment.Center,
+    };
 
     private void OnOmniboxKeyDown(object sender, KeyEventArgs args)
     {
@@ -1713,6 +1848,11 @@ public sealed class BrowserChromeControl : Grid
 
         args.Handled = true;
     }
+
+    private void UpdateOmniboxPlaceholder() => omniboxPlaceholder.Visibility =
+        string.IsNullOrEmpty(omnibox.Text) && !omnibox.IsKeyboardFocusWithin
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs args)
     {
@@ -2295,6 +2435,54 @@ public sealed class BrowserChromeControl : Grid
             addressBar,
             "Show or hide the address and search field. This command remains available while it is hidden.");
         menu.Items.Add(addressBar);
+        var compactTabs = CreateMenuItem(
+            "Compact tabs",
+            RequestCompactTabModeChange,
+            canExecute: () => compactTabModeChangeRequested is not null,
+            unavailableReason: "Compact tab mode is unavailable until the profile host is ready.");
+        compactTabs.IsCheckable = true;
+        compactTabs.IsChecked = compactTabMode;
+        AutomationProperties.SetAcceleratorKey(compactTabs, "Alt+Shift+F");
+        AutomationProperties.SetHelpText(
+            compactTabs,
+            "Use narrower favicon-only tabs. Keyboard shortcut: Alt+Shift+F.");
+        menu.Items.Add(compactTabs);
+        foreach (var placement in Enum.GetValues<TabStripPlacement>())
+        {
+            var captured = placement;
+            var placementItem = CreateMenuItem(
+                $"Tabs on {placement.ToString().ToLowerInvariant()}",
+                () => RequestTabPlacementChange(captured),
+                canExecute: () => workspacePreferencesChanged is not null && !tabPlacementTransitionInProgress,
+                unavailableReason: "Tab placement is unavailable until the profile host is ready.");
+            placementItem.IsCheckable = true;
+            placementItem.IsChecked = workspacePreferences.TabStripPlacement == placement;
+            menu.Items.Add(placementItem);
+        }
+        var affiliatedSites = CreateMenuItem(
+            "Show Affiliated Sites rail",
+            ToggleAffiliatedRail,
+            canExecute: () => workspacePreferencesChanged is not null,
+            unavailableReason: "Affiliated Sites preferences are unavailable until the profile is ready.");
+        affiliatedSites.IsCheckable = true;
+        affiliatedSites.IsChecked = workspacePreferences.ShowAffiliatedRail;
+        menu.Items.Add(affiliatedSites);
+        foreach (var placement in Enum.GetValues<AffiliatedRailPlacement>())
+        {
+            var captured = placement;
+            var placementItem = CreateMenuItem(
+                $"Affiliated Sites rail on {placement.ToString().ToLowerInvariant()}",
+                () => RequestWorkspacePreferenceChange(workspacePreferences with
+                {
+                    AffiliatedRailPlacement = captured,
+                    ShowAffiliatedRail = true,
+                }),
+                canExecute: () => workspacePreferencesChanged is not null,
+                unavailableReason: "Affiliated Sites preferences are unavailable until the profile is ready.");
+            placementItem.IsCheckable = true;
+            placementItem.IsChecked = workspacePreferences.AffiliatedRailPlacement == placement;
+            menu.Items.Add(placementItem);
+        }
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateMenuItem("Settings", () => RequestSurface(InternalPageKind.Settings), OrbitIconKind.Settings,
             () => IsUtilityAvailable(InternalPageKind.Settings),
@@ -2578,6 +2766,7 @@ public sealed class BrowserChromeControl : Grid
             permissionSurface.BorderBrush = SystemColors.WindowTextBrush;
             privateIndicator.Background = SystemColors.HighlightBrush;
             privateIndicatorText.Foreground = SystemColors.HighlightTextBrush;
+            omniboxPlaceholder.Foreground = SystemColors.GrayTextBrush;
         }
         else
         {
@@ -2592,6 +2781,7 @@ public sealed class BrowserChromeControl : Grid
             permissionSurface.BorderBrush = OrbitVisualTheme.SeaGlass;
             privateIndicator.Background = OrbitVisualTheme.PrivateViolet;
             privateIndicatorText.Foreground = OrbitVisualTheme.Ink;
+            omniboxPlaceholder.Foreground = OrbitVisualTheme.MutedInk;
         }
 
         OrbitVisualTheme.ApplyButton(backButton, OrbitButtonRole.Toolbar);
@@ -2599,9 +2789,14 @@ public sealed class BrowserChromeControl : Grid
         OrbitVisualTheme.ApplyButton(reloadButton, OrbitButtonRole.Toolbar);
         OrbitVisualTheme.ApplyButton(homeButton, OrbitButtonRole.Toolbar);
         OrbitVisualTheme.ApplyButton(privateWindowButton, OrbitButtonRole.Private);
-        OrbitVisualTheme.ApplyButton(collapseModeButton, OrbitButtonRole.Toolbar);
         OrbitVisualTheme.ApplyButton(compactTabsButton, OrbitButtonRole.Toolbar);
         OrbitVisualTheme.ApplyButton(tabLayoutButton, OrbitButtonRole.Toolbar);
+        OrbitVisualTheme.ApplyButton(affiliatedRailButton, OrbitButtonRole.Toolbar);
+        OrbitVisualTheme.ApplyButton(showTabsButton, OrbitButtonRole.Toolbar);
+        OrbitVisualTheme.ApplyButton(browserMenuButton, OrbitButtonRole.Toolbar);
+        OrbitVisualTheme.ApplyButton(windowMinimizeButton, OrbitButtonRole.Toolbar);
+        OrbitVisualTheme.ApplyButton(windowMaximizeRestoreButton, OrbitButtonRole.Toolbar);
+        OrbitVisualTheme.ApplyCaptionCloseButton(windowCloseButton);
         OrbitVisualTheme.ApplyTextBox(omnibox);
     }
 

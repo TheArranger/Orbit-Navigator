@@ -177,7 +177,10 @@ public sealed class OfflineAndQuickViewVisualTests
             {
                 var rest = Assert.IsType<LinearGradientBrush>(control.LauncherSurface.Background);
                 var restAlpha = rest.GradientStops[0].Color.A;
-                Assert.InRange(restAlpha, (byte)160, (byte)210);
+                Assert.InRange(restAlpha, (byte)80, (byte)160);
+                Assert.True(control.OverlayPopup.AllowsTransparency);
+                Assert.Equal(Brushes.Transparent, Assert.IsType<Grid>(control.OverlayPopup.Child).Background);
+                Assert.NotEqual(OrbitVisualTheme.WaypointGold, control.LauncherSurface.BorderBrush);
 
                 control.LauncherSurface.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0)
                 {

@@ -54,6 +54,7 @@ public sealed class BookmarkManagerDialog : Window
         bool canEditBookmarks,
         IReadOnlyDictionary<BookmarkId, string>? notes = null)
     {
+        OrbitVisualTheme.ApplyScrollBarTheme(this);
         canModify = !context.IsPrivate;
         canEdit = canModify && canEditBookmarks;
         bookmarkNotes = notes ?? new Dictionary<BookmarkId, string>();

@@ -24,6 +24,12 @@
     <ProjectReference Include="..\OrbitNavigator.Updates\OrbitNavigator.Updates.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Include="..\..\CHANGELOG.md" LogicalName="OrbitNavigator.App.CHANGELOG.md" />
+    <Content Include="..\..\CHANGELOG.md">
+      <Link>CHANGELOG.md</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <Content Include="..\..\LICENSE">
       <Link>LICENSE</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

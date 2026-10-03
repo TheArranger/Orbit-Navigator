@@ -94,6 +94,28 @@ public sealed class TabStripViewportModelTests
         Assert.Contains(overflow.VisibleEntries, entry => entry is BrowserTabEntry tab && tab.TabId == selected);
     }
 
+    [Fact]
+    public void CompactModeUsesFixedNarrowExtentsEvenWithRoomForWideTabs()
+    {
+        var tabs = Enumerable.Range(0, 3).Select(index => Entry(index, $"Tab {index}"))
+            .Cast<TabStripEntry>().ToArray();
+
+        var top = TabStripViewportModel.Project(
+            tabs, ((BrowserTabEntry)tabs[0]).TabId, null, 1200,
+            TabStripPlacement.Top, detached: false, compactMode: true);
+        var side = TabStripViewportModel.Project(
+            tabs, ((BrowserTabEntry)tabs[0]).TabId, null, 500,
+            TabStripPlacement.Left, detached: false, compactMode: true);
+        var detached = TabStripViewportModel.Project(
+            tabs, ((BrowserTabEntry)tabs[0]).TabId, null, 500,
+            TabStripPlacement.Top, detached: true, compactMode: true);
+
+        Assert.Equal(TabStripViewportModel.CompactTopTabExtent, top.EntryExtent);
+        Assert.Equal(TabStripViewportModel.CompactVerticalEntryExtent, side.EntryExtent);
+        Assert.Equal(TabStripViewportModel.CompactVerticalEntryExtent, detached.EntryExtent);
+        Assert.Equal(3, top.Count);
+    }
+
     private static BrowserTabEntry Entry(int index, string title) => new(
         new BrowserTabId(Guid.Parse($"00000000-0000-0000-0000-{index + 1:D12}")),
         null,

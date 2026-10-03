@@ -350,8 +350,10 @@ public sealed class TabControllerControl : Grid
 
         overflowScrollBar.Orientation = vertical ? Orientation.Vertical : Orientation.Horizontal;
         overflowScrollBar.Style = OrbitVisualTheme.CreateTabViewportScrollBarStyle(overflowScrollBar.Orientation);
-        entriesViewport.MinHeight = vertical ? 0 : 57;
-        entriesViewport.MinWidth = vertical ? 132 : 0;
+        entriesViewport.MinHeight = vertical ? 0 : compactMode ? 53 : 57;
+        entriesViewport.MinWidth = vertical
+            ? compactMode ? TabStripViewportModel.CompactMinimumVerticalColumnWidth : 132
+            : 0;
         if (vertical)
         {
             entriesViewport.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -420,8 +422,23 @@ public sealed class TabControllerControl : Grid
             (int)Math.Ceiling(
                 commands.Children.OfType<UIElement>().Count(child => child.Visibility == Visibility.Visible) /
                 (double)Math.Max(1, (int)Math.Floor(Math.Max(44, ActualWidth) / 44d))));
+        var hasAudibleControls = state.TabInteractions.Values.Any(interaction =>
+            interaction.IsPlayingAudio && interaction.Mute.IsAvailable);
+        var verticalEntryExtent = compactMode
+            ? TabStripViewportModel.CompactVerticalEntryExtent
+            : TabStripViewportModel.SafeVerticalEntryExtent;
+        var minimumVerticalColumnWidth = compactMode
+            ? hasAudibleControls
+                ? TabStripViewportModel.AudibleCompactTopTabExtent + TabStripViewportModel.VerticalColumnSpacing
+                : TabStripViewportModel.CompactMinimumVerticalColumnWidth
+            : TabStripViewportModel.MinimumVerticalColumnWidth;
+        var preferredVerticalColumnWidth = compactMode
+            ? hasAudibleControls
+                ? TabStripViewportModel.AudibleCompactTopTabExtent + (TabStripViewportModel.VerticalColumnSpacing * 2)
+                : TabStripViewportModel.CompactPreferredVerticalColumnWidth
+            : TabStripViewportModel.PreferredVerticalColumnWidth;
         var verticalAvailableHeight = Math.Max(
-            TabStripViewportModel.SafeVerticalEntryExtent,
+            verticalEntryExtent,
             ActualHeight - (SurfaceKind == TabControllerSurfaceKind.Detached ? 66d : dockedCommandRows * 48d) -
             (SurfaceKind == TabControllerSurfaceKind.Detached ? 52d : 0d));
         if (vertical)
@@ -430,15 +447,15 @@ public sealed class TabControllerControl : Grid
                 ? entriesViewport.ActualWidth
                 : ActualWidth;
             var contentWidth = Math.Max(
-                TabStripViewportModel.MinimumVerticalColumnWidth,
+                minimumVerticalColumnWidth,
                 viewportWidth - TabStripViewportModel.ReservedVerticalScrollbarGutter);
             visibleColumnCount = Math.Max(
                 1,
                 (int)Math.Floor(contentWidth /
-                    (TabStripViewportModel.MinimumVerticalColumnWidth +
+                    (minimumVerticalColumnWidth +
                      TabStripViewportModel.VerticalColumnSpacing)));
             visibleColumnWidth = Math.Min(
-                TabStripViewportModel.PreferredVerticalColumnWidth,
+                preferredVerticalColumnWidth,
                 Math.Floor(contentWidth / visibleColumnCount) -
                 (TabStripViewportModel.VerticalColumnSpacing / 2));
             entries.ItemWidth = visibleColumnWidth;
@@ -449,13 +466,16 @@ public sealed class TabControllerControl : Grid
             visibleColumnWidth = TabStripViewportModel.PreferredVerticalColumnWidth;
         }
         var available = vertical
-            ? Math.Max(1, Math.Floor(verticalAvailableHeight / TabStripViewportModel.SafeVerticalEntryExtent)) *
-              TabStripViewportModel.SafeVerticalEntryExtent * visibleColumnCount
-            : Math.Max(TabStripViewportModel.SafeTopTabExtent, ActualWidth - reserved);
+            ? Math.Max(1, Math.Floor(verticalAvailableHeight / verticalEntryExtent)) *
+              verticalEntryExtent * visibleColumnCount
+            : Math.Max(
+                compactMode ? TabStripViewportModel.CompactTopTabExtent : TabStripViewportModel.SafeTopTabExtent,
+                ActualWidth - reserved);
         var canonical = state.Projection.Tabs.Entries;
-        var audibleCompactMinimum = state.TabInteractions.Values.Any(interaction =>
-            interaction.IsPlayingAudio && interaction.Mute.IsAvailable)
-            ? TabStripViewportModel.AudibleCompactTopTabExtent
+        var audibleCompactMinimum = hasAudibleControls
+            ? compactMode
+                ? TabStripViewportModel.AudibleCompactTopTabExtent
+                : TabStripViewportModel.AudibleSafeTopTabExtent
             : 0;
         viewport = TabStripViewportModel.Project(
             canonical,
@@ -487,7 +507,10 @@ public sealed class TabControllerControl : Grid
                 visible[selectedIndex < start ? 0 : visible.Length - 1] = canonical[selectedIndex];
             }
             viewport = new(start, visible.Length, start, canonical.Count - start - visible.Length,
-                start > 0, start + visible.Length < canonical.Count, visible);
+                start > 0, start + visible.Length < canonical.Count, visible)
+            {
+                EntryExtent = viewport.EntryExtent,
+            };
         }
 
         entries.Children.Clear();
@@ -499,7 +522,7 @@ public sealed class TabControllerControl : Grid
                                   viewportExtent > 0
             ? Math.Clamp(
                 viewportExtent / Math.Max(1, visibleEntries.Count),
-                vertical ? TabStripViewportModel.SafeVerticalEntryExtent : TabStripViewportModel.CompactTopTabExtent,
+                vertical ? verticalEntryExtent : TabStripViewportModel.CompactTopTabExtent,
                 viewport.EntryExtent)
             : viewport.EntryExtent;
         foreach (var entry in visibleEntries)
@@ -566,26 +589,44 @@ public sealed class TabControllerControl : Grid
         var visual = ResolveTabVisual(tab);
         var interaction = ResolveTabInteraction(tab.TabId);
         var showAudio = interaction is { IsPlayingAudio: true, Mute.IsAvailable: true };
+        var dense = compactMode || tab.IsCompact;
+        var minimumVerticalWidth = compactMode
+            ? TabStripViewportModel.CompactMinimumVerticalColumnWidth
+            : TabStripViewportModel.MinimumVerticalColumnWidth;
+        var preferredVerticalWidth = compactMode
+            ? TabStripViewportModel.CompactPreferredVerticalColumnWidth
+            : TabStripViewportModel.PreferredVerticalColumnWidth;
+        if (dense && showAudio)
+        {
+            minimumVerticalWidth = TabStripViewportModel.AudibleCompactTopTabExtent +
+                TabStripViewportModel.VerticalColumnSpacing;
+            preferredVerticalWidth = TabStripViewportModel.AudibleCompactTopTabExtent +
+                (TabStripViewportModel.VerticalColumnSpacing * 2);
+        }
         var availableCardWidth = vertical
             ? Math.Clamp(
                 visibleColumnWidth - TabStripViewportModel.VerticalColumnSpacing,
-                TabStripViewportModel.MinimumVerticalColumnWidth - TabStripViewportModel.VerticalColumnSpacing,
-                TabStripViewportModel.PreferredVerticalColumnWidth)
+                minimumVerticalWidth - TabStripViewportModel.VerticalColumnSpacing,
+                preferredVerticalWidth)
             : entryExtent;
-        var faviconOnly = compactMode || tab.IsCompact ||
+        var faviconOnly = dense ||
                           availableCardWidth < TabStripViewportModel.ReadableTitleThreshold;
         var titleWidth = vertical
             ? showAudio ? 50d : 94d
             : Math.Clamp(availableCardWidth - (showAudio ? 134d : 90d), 44d, 92d);
         var verticalCardWidth = faviconOnly
-            ? Math.Min(availableCardWidth, showAudio ? 140d : 96d)
+            ? Math.Min(
+                availableCardWidth,
+                showAudio ? TabStripViewportModel.AudibleCompactTopTabExtent : TabStripViewportModel.CompactTopTabExtent)
             : availableCardWidth;
         var card = new Grid
         {
             Height = 44,
             MinHeight = 44,
             MinWidth = showAudio
-                ? TabStripViewportModel.AudibleCompactTopTabExtent
+                ? dense
+                    ? TabStripViewportModel.AudibleCompactTopTabExtent
+                    : TabStripViewportModel.AudibleSafeTopTabExtent
                 : TabStripViewportModel.CompactTopTabExtent,
             MaxWidth = vertical
                 ? verticalCardWidth
@@ -593,7 +634,9 @@ public sealed class TabControllerControl : Grid
             Width = vertical
                 ? verticalCardWidth
                 : availableCardWidth,
-            Margin = vertical ? new Thickness(0, 0, 0, 2) : new Thickness(0, 0, 3, 0),
+            Margin = vertical
+                ? new Thickness(0, 0, 0, dense ? 0 : 2)
+                : new Thickness(0, 0, dense ? 0 : 3, 0),
             HorizontalAlignment = HorizontalAlignment.Left,
         };
         card.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -606,7 +649,7 @@ public sealed class TabControllerControl : Grid
             MinHeight = 44,
             MinWidth = 44,
             HorizontalContentAlignment = HorizontalAlignment.Left,
-            Padding = new Thickness(10, 0, 8, 0),
+            Padding = dense ? new Thickness(6, 0, 4, 0) : new Thickness(10, 0, 8, 0),
         };
         OrbitVisualTheme.ApplyCompactRailButton(select, OrbitButtonRole.Tab);
         AutomationProperties.SetName(select, $"{visual.Title}, tab");
@@ -703,13 +746,20 @@ public sealed class TabControllerControl : Grid
 
     private Button CreateGroupButton(TabGroupHeaderEntry group, bool vertical, double entryExtent)
     {
+        var dense = compactMode || group.IsCompact;
+        var minimumVerticalWidth = compactMode
+            ? TabStripViewportModel.CompactMinimumVerticalColumnWidth
+            : TabStripViewportModel.MinimumVerticalColumnWidth;
+        var preferredVerticalWidth = compactMode
+            ? TabStripViewportModel.CompactPreferredVerticalColumnWidth
+            : TabStripViewportModel.PreferredVerticalColumnWidth;
         var availableGroupWidth = vertical
             ? Math.Clamp(
                 visibleColumnWidth - TabStripViewportModel.VerticalColumnSpacing,
-                TabStripViewportModel.MinimumVerticalColumnWidth - TabStripViewportModel.VerticalColumnSpacing,
-                TabStripViewportModel.PreferredVerticalColumnWidth)
+                minimumVerticalWidth - TabStripViewportModel.VerticalColumnSpacing,
+                preferredVerticalWidth)
             : entryExtent;
-        var faviconOnly = compactMode || group.IsCompact ||
+        var faviconOnly = dense ||
                           availableGroupWidth < TabStripViewportModel.ReadableTitleThreshold;
         var content = new StackPanel { Orientation = Orientation.Horizontal };
         content.Children.Add(new OrbitEmberStar(OrbitEmberStarKind.TabGroup)
@@ -737,12 +787,15 @@ public sealed class TabControllerControl : Grid
             TabCount = group.TabCount,
             IsCollapsed = group.IsCollapsed,
             MinHeight = 44,
+            Height = 44,
             MinWidth = faviconOnly ? 44 : 112,
             Width = vertical
-                ? faviconOnly ? 48 : availableGroupWidth
+                ? faviconOnly ? Math.Min(80, availableGroupWidth) : availableGroupWidth
                 : Math.Min(entryExtent, TabStripViewportModel.PreferredTopTabExtent),
             HorizontalContentAlignment = HorizontalAlignment.Left,
-            Margin = vertical ? new Thickness(0, 6, 0, 4) : new Thickness(6, 0, 4, 0),
+            Margin = vertical
+                ? dense ? new Thickness(0) : new Thickness(0, 0, 0, 4)
+                : dense ? new Thickness(0) : new Thickness(6, 0, 4, 0),
         };
         OrbitVisualTheme.ApplyCompactRailButton(button, OrbitButtonRole.Group);
         AutomationProperties.SetName(button,

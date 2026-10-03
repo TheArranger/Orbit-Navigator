@@ -32,13 +32,13 @@ public sealed class NewTabPageControl : Grid
     {
         Margin = new Thickness(0, 18, 0, 0),
     };
-    private readonly Button bookmarkViewToggle = new() { Content = "Show list view", MinHeight = 36, Margin = new Thickness(8, 0, 0, 0) };
-    private readonly Button workspaceViewToggle = new() { Content = "Show list view", MinHeight = 36, Margin = new Thickness(8, 0, 0, 0) };
-    private readonly Button visualModeToggle = new() { MinHeight = 36, Margin = new Thickness(8, 0, 0, 0) };
+    private readonly Button bookmarkViewToggle = new() { Content = "Show list view", MinHeight = 44, Margin = new Thickness(8, 0, 0, 0) };
+    private readonly Button workspaceViewToggle = new() { Content = "Show list view", MinHeight = 44, Margin = new Thickness(8, 0, 0, 0) };
+    private readonly Button visualModeToggle = new() { MinHeight = 44, Margin = new Thickness(8, 0, 0, 0) };
     private readonly TextBox searchBox = new()
     {
         Height = 48,
-        MinWidth = 320,
+        MinWidth = 0,
         VerticalContentAlignment = VerticalAlignment.Center,
     };
     private readonly Button searchButton;
@@ -56,7 +56,7 @@ public sealed class NewTabPageControl : Grid
         Margin = new Thickness(4),
         Visibility = Visibility.Collapsed,
     };
-    private readonly StackPanel projectLinks = new()
+    private readonly WrapPanel projectLinks = new()
     {
         Orientation = Orientation.Horizontal,
         HorizontalAlignment = HorizontalAlignment.Center,
@@ -65,21 +65,24 @@ public sealed class NewTabPageControl : Grid
     private readonly Button manageBookmarksButton = new()
     {
         Content = "Manage bookmarks",
-        MinHeight = 36,
+        MinHeight = 44,
         Margin = new Thickness(8, 0, 0, 0),
     };
     private readonly Button createWorkspaceButton = new()
     {
         Content = "Create workspace",
-        MinHeight = 36,
+        MinHeight = 44,
         Margin = new Thickness(8, 0, 0, 0),
     };
-    private readonly Button emptyManageButton = new() { Content = "Open bookmarks", Margin = new Thickness(4) };
-    private readonly Button emptyCreateButton = new() { Content = "Create a workspace", Margin = new Thickness(4) };
+    private readonly Button emptyManageButton = new() { Content = "Open bookmarks", MinHeight = 44, Margin = new Thickness(4) };
+    private readonly Button emptyCreateButton = new() { Content = "Create a workspace", MinHeight = 44, Margin = new Thickness(4) };
     private readonly Border searchSurface = OrbitVisualTheme.CreateSurface(12);
     private readonly Border workspaceSurface = OrbitVisualTheme.CreateSurface(18);
     private readonly WrapPanel bookmarkTiles = new() { Orientation = Orientation.Horizontal };
     private readonly WrapPanel workspaceTiles = new() { Orientation = Orientation.Horizontal };
+    private readonly WrapPanel destinations = new() { Orientation = Orientation.Horizontal };
+    private StackPanel? bookmarkSection;
+    private StackPanel? workspaceSection;
     private readonly StackPanel emptyState = new();
     private readonly StackPanel pageContent = new()
     {
@@ -88,12 +91,18 @@ public sealed class NewTabPageControl : Grid
         Margin = new Thickness(32, 24, 32, 36),
     };
     private readonly DockPanel pageShell = new() { LastChildFill = true };
+    private readonly ScrollViewer pageScroll = new()
+    {
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+    };
     private readonly TextBlock privateStatus = new()
     {
         Text = "PRIVATE BROWSING  ·  local session only  ·  sync and saved workspace changes stay off",
         FontWeight = FontWeights.SemiBold,
         HorizontalAlignment = HorizontalAlignment.Center,
         TextAlignment = TextAlignment.Center,
+        TextWrapping = TextWrapping.Wrap,
     };
     private readonly Border privateStatusSurface = new()
     {
@@ -120,12 +129,14 @@ public sealed class NewTabPageControl : Grid
     private bool bookmarkListView;
     private bool workspaceListView;
     private bool reducedVisualNoise;
+    private bool compactViewport;
     private bool systemParameterEventsAttached;
     private bool isPrivateMode;
     private BrowserWorkspacePreferences preferences = BrowserWorkspacePreferences.Default;
 
     public NewTabPageControl()
     {
+        OrbitVisualTheme.ApplyScrollBarTheme(this);
         Background = OrbitVisualTheme.Canvas;
         affiliatedSites.IsRailMode = true;
         affiliatedSites.ShowInlineVisibilityControl = false;
@@ -188,6 +199,8 @@ public sealed class NewTabPageControl : Grid
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         SizeChanged += (_, _) => UpdateResponsiveWidths();
+        pageScroll.SizeChanged += (_, _) => UpdateResponsiveWidths();
+        pageScroll.ScrollChanged += OnPageScrollChanged;
     }
 
     public event EventHandler<NewTabNavigationRequestedEventArgs>? NavigationRequested;
@@ -404,6 +417,7 @@ public sealed class NewTabPageControl : Grid
             Foreground = OrbitVisualTheme.MutedInk,
             HorizontalAlignment = HorizontalAlignment.Center,
             TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 14),
         };
         AutomationProperties.SetName(searchBox, "Search or enter address");
@@ -420,26 +434,31 @@ public sealed class NewTabPageControl : Grid
         searchSurface.HorizontalAlignment = HorizontalAlignment.Center;
         searchSurface.Child = searchGrid;
 
-        var privacy = new StackPanel
+        var privacy = new Grid
         {
-            Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 12, 0, 16),
         };
-        privacy.Children.Add(new OrbitIcon
+        privacy.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        privacy.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var privacyIcon = new OrbitIcon
         {
             Kind = OrbitIconKind.Shield,
             Width = 18,
             Height = 18,
             Stroke = OrbitVisualTheme.SeaGlass,
             Margin = new Thickness(0, 0, 8, 0),
-        });
-        privacy.Children.Add(new TextBlock
+        };
+        privacy.Children.Add(privacyIcon);
+        var privacyCopy = new TextBlock
         {
             Text = "No browser-owned telemetry. Sign-in is optional.",
             Foreground = OrbitVisualTheme.MutedInk,
             VerticalAlignment = VerticalAlignment.Center,
-        });
+            TextWrapping = TextWrapping.Wrap,
+        };
+        Grid.SetColumn(privacyCopy, 1);
+        privacy.Children.Add(privacyCopy);
 
         workspaceSurface.Padding = new Thickness(16, 12, 16, 18);
         workspaceSurface.Child = BuildWorkspaceLayout();
@@ -479,15 +498,10 @@ public sealed class NewTabPageControl : Grid
         pageContent.Children.Add(BuildVisualModeControl());
         pageContent.Children.Add(workspaceSurface);
         pageContent.Children.Add(projectLinks);
-        var scroll = new ScrollViewer
-        {
-            Content = pageContent,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-        };
-        KeyboardNavigation.SetTabNavigation(scroll, KeyboardNavigationMode.Continue);
+        pageScroll.Content = pageContent;
+        KeyboardNavigation.SetTabNavigation(pageScroll, KeyboardNavigationMode.Continue);
         pageShell.Children.Add(affiliatedSites);
-        pageShell.Children.Add(scroll);
+        pageShell.Children.Add(pageScroll);
         Children.Add(pageShell);
         ApplyWorkspacePreferences(preferences);
     }
@@ -503,9 +517,48 @@ public sealed class NewTabPageControl : Grid
         var railExtent = affiliatedSites.Visibility == Visibility.Visible
             ? affiliatedSites.Width + affiliatedSites.Margin.Left + affiliatedSites.Margin.Right
             : 0;
-        var available = Math.Max(360, ActualWidth - 64 - railExtent);
+        var fallbackViewport = Math.Max(0, ActualWidth - railExtent - 13);
+        var contentViewport = pageScroll.ViewportWidth > 0 ? pageScroll.ViewportWidth : fallbackViewport;
+        var horizontalInset = contentViewport < 520 ? 12d : 32d;
+        pageContent.Margin = new Thickness(horizontalInset, 24, horizontalInset, 36);
+        var available = Math.Max(0, contentViewport - (horizontalInset * 2));
         pageContent.Width = Math.Min(980, available);
         searchSurface.Width = Math.Min(680, available);
+
+        // The workspace surface has 16 DIP padding on each side. Keep each hub
+        // inside the remaining viewport instead of retaining the desktop-only
+        // 440 DIP wrap slot when side tabs and the affiliate rail are present.
+        var destinationExtent = Math.Max(0, Math.Min(440, available - 34));
+        destinations.ItemWidth = destinationExtent;
+        var sectionWidth = Math.Max(0, destinationExtent - 14);
+        if (bookmarkSection is not null) bookmarkSection.Width = sectionWidth;
+        if (workspaceSection is not null) workspaceSection.Width = sectionWidth;
+        var tileWidth = Math.Max(44, sectionWidth - 12);
+        foreach (var tile in bookmarkTiles.Children.OfType<Button>())
+        {
+            tile.Width = Math.Min(204, tileWidth);
+        }
+        foreach (var tile in workspaceTiles.Children.OfType<FrameworkElement>())
+        {
+            tile.Width = Math.Min(286, tileWidth);
+        }
+
+        var nextCompactViewport = available < 360;
+        if (compactViewport != nextCompactViewport)
+        {
+            compactViewport = nextCompactViewport;
+            UpdateHubModes();
+        }
+    }
+
+    private void OnPageScrollChanged(object sender, ScrollChangedEventArgs args)
+    {
+        if (ReferenceEquals(sender, pageScroll) &&
+            ReferenceEquals(args.OriginalSource, pageScroll) &&
+            Math.Abs(args.ViewportWidthChange) > double.Epsilon)
+        {
+            UpdateResponsiveWidths();
+        }
     }
 
     private FrameworkElement BuildWorkspaceLayout()
@@ -515,21 +568,19 @@ public sealed class NewTabPageControl : Grid
         AutomationProperties.SetName(createWorkspaceButton, "Create workspace");
         bookmarkTiles.Margin = new Thickness(-6, 10, -6, 18);
         workspaceTiles.Margin = new Thickness(-6, 10, -6, 0);
-        var destinations = new WrapPanel
-        {
-            Orientation = Orientation.Horizontal,
-            ItemWidth = 440,
-        };
-        destinations.Children.Add(HubSection(
+        destinations.ItemWidth = 440;
+        bookmarkSection = HubSection(
             "Bookmarks",
             ActionCluster(bookmarkViewToggle, manageBookmarksButton),
             bookmarkHub,
-            bookmarkTiles));
-        destinations.Children.Add(HubSection(
+            bookmarkTiles);
+        workspaceSection = HubSection(
             "Saved workspaces",
             ActionCluster(workspaceViewToggle, createWorkspaceButton),
             workspaceHub,
-            workspaceTiles));
+            workspaceTiles);
+        destinations.Children.Add(bookmarkSection);
+        destinations.Children.Add(workspaceSection);
         layout.Children.Add(destinations);
 
         emptyState.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -563,7 +614,7 @@ public sealed class NewTabPageControl : Grid
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 6, 0, 12),
         });
-        var emptyActions = new StackPanel
+        var emptyActions = new WrapPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -592,8 +643,8 @@ public sealed class NewTabPageControl : Grid
 
     private FrameworkElement BuildVisualModeControl()
     {
-        var row = new DockPanel { LastChildFill = true };
-        var copy = new StackPanel { Margin = new Thickness(0, 0, 18, 0) };
+        var row = new StackPanel();
+        var copy = new StackPanel();
         copy.Children.Add(new TextBlock
         {
             Text = "New Tab appearance",
@@ -607,19 +658,20 @@ public sealed class NewTabPageControl : Grid
             Foreground = OrbitVisualTheme.MutedInk,
             TextWrapping = TextWrapping.Wrap,
         });
-        DockPanel.SetDock(visualModeToggle, Dock.Right);
-        row.Children.Add(visualModeToggle);
         row.Children.Add(copy);
+        visualModeToggle.HorizontalAlignment = HorizontalAlignment.Left;
+        visualModeToggle.Margin = new Thickness(0, 8, 0, 0);
+        row.Children.Add(visualModeToggle);
         visualModeSurface.Padding = new Thickness(14, 10, 14, 10);
         visualModeSurface.Margin = new Thickness(0, 0, 0, 10);
-        visualModeSurface.HorizontalAlignment = HorizontalAlignment.Center;
+        visualModeSurface.HorizontalAlignment = HorizontalAlignment.Stretch;
         visualModeSurface.MaxWidth = 760;
         visualModeSurface.Child = row;
         AutomationProperties.SetName(visualModeSurface, "New Tab appearance mode");
         return visualModeSurface;
     }
 
-    private static FrameworkElement HubSection(
+    private static StackPanel HubSection(
         string heading,
         UIElement actions,
         StellarHubControl hub,
@@ -636,18 +688,16 @@ public sealed class NewTabPageControl : Grid
         return section;
     }
 
-    private static StackPanel ActionCluster(params Button[] buttons)
+    private static WrapPanel ActionCluster(params Button[] buttons)
     {
-        var cluster = new StackPanel { Orientation = Orientation.Horizontal };
+        var cluster = new WrapPanel { Orientation = Orientation.Horizontal };
         foreach (var button in buttons) cluster.Children.Add(button);
         return cluster;
     }
 
-    private static DockPanel SectionHeading(string heading, UIElement action)
+    private static StackPanel SectionHeading(string heading, UIElement action)
     {
-        var panel = new DockPanel { LastChildFill = true };
-        DockPanel.SetDock(action, Dock.Right);
-        panel.Children.Add(action);
+        var panel = new StackPanel();
         var text = new TextBlock
         {
             Text = heading,
@@ -659,6 +709,11 @@ public sealed class NewTabPageControl : Grid
         };
         AutomationProperties.SetHeadingLevel(text, AutomationHeadingLevel.Level2);
         panel.Children.Add(text);
+        if (action is FrameworkElement actionElement)
+        {
+            actionElement.Margin = new Thickness(0, 6, 0, 0);
+        }
+        panel.Children.Add(action);
         return panel;
     }
 
@@ -716,11 +771,12 @@ public sealed class NewTabPageControl : Grid
             ColorToken = preset.ColorToken,
         }).ToArray());
         UpdateHubModes();
+        UpdateResponsiveWidths();
     }
 
     private void UpdateHubModes()
     {
-        var forceList = SystemParameters.HighContrast || reducedVisualNoise ||
+        var forceList = SystemParameters.HighContrast || reducedVisualNoise || compactViewport ||
                         preferences.NewTabMode == NewTabVisualMode.Basic;
         var showBookmarkList = forceList || bookmarkListView;
         var showWorkspaceList = forceList || workspaceListView;
@@ -887,8 +943,8 @@ public sealed class NewTabPageControl : Grid
         var actions = new Button
         {
             Content = "•••",
-            Width = 38,
-            Height = 38,
+            Width = 44,
+            Height = 44,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(0, 7, 7, 0),

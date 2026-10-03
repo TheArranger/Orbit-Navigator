@@ -17,6 +17,7 @@ public sealed class TabGroupCloseConfirmationDialog : Window
 {
     public TabGroupCloseConfirmationDialog(string groupName, int tabCount)
     {
+        OrbitVisualTheme.ApplyScrollBarTheme(this);
         if (tabCount < 2) throw new ArgumentOutOfRangeException(nameof(tabCount));
         Title = "Close tab group — Orbit Navigator";
         Width = 460;
@@ -77,6 +78,7 @@ public sealed class SaveTabGroupWorkspaceDialog : Window
         IReadOnlyList<WorkspacePresetTabPresentation> tabs,
         Func<WorkspaceLocalArtworkImportRequest, WorkspaceArtworkPresentation?>? localArtworkImporter = null)
     {
+        OrbitVisualTheme.ApplyScrollBarTheme(this);
         if (groupId.IsEmpty) throw new ArgumentException("A group ID is required.", nameof(groupId));
         if (tabs is null || tabs.Count == 0) throw new ArgumentException("A workspace requires tabs.", nameof(tabs));
         this.groupId = groupId;

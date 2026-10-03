@@ -40,9 +40,45 @@ public sealed class BrowserChromeVisualTests
             Assert.NotEmpty(StaTest.Descendants(chrome).OfType<OrbitIcon>());
             Assert.NotNull(StaTest.FindByAutomationName<Button>(chrome, "Go back").Template);
             Assert.NotNull(StaTest.FindByAutomationName<TextBox>(chrome, "Address and search").Template);
-            Assert.False(StaTest.FindByAutomationName<Button>(chrome, "New private window").IsEnabled);
+            var menuButton = StaTest.FindByAutomationName<Button>(chrome, "Open browser menu");
+            menuButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.False(Assert.IsType<ContextMenu>(menuButton.ContextMenu).Items.OfType<MenuItem>()
+                .Single(item => AutomationProperties.GetName(item) == "New private window, unavailable").IsEnabled);
             Assert.Equal("Private window", AutomationProperties.GetName(
                 StaTest.FindByAutomationName<Border>(chrome, "Private window")));
+        });
+    }
+
+    [Fact]
+    public void EmptyOmniboxShowsNonInteractiveHintUntilFocusedOrPopulated()
+    {
+        StaTest.Run(() =>
+        {
+            var chrome = new BrowserChromeControl();
+            var window = new Window { Content = chrome, Width = 900, Height = 650, ShowInTaskbar = false };
+            window.Show();
+            try
+            {
+                window.UpdateLayout();
+                var address = StaTest.FindByAutomationName<TextBox>(chrome, "Address and search");
+                var hint = StaTest.Descendants(chrome).OfType<TextBlock>()
+                    .Single(text => text.Text == "Search or enter address");
+
+                Assert.Equal(Visibility.Visible, hint.Visibility);
+                Assert.False(hint.IsHitTestVisible);
+                Assert.False(hint.Focusable);
+                Assert.True(address.Focus());
+                Assert.Equal(Visibility.Collapsed, hint.Visibility);
+                address.Text = "example.test";
+                Keyboard.ClearFocus();
+                Assert.Equal(Visibility.Collapsed, hint.Visibility);
+                address.Clear();
+                Assert.Equal(Visibility.Visible, hint.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
         });
     }
 
@@ -197,7 +233,7 @@ public sealed class BrowserChromeVisualTests
 
             Assert.False(chrome.IsFullscreen);
             Assert.True(chrome.IsDockedTabControllerVisible);
-            Assert.Equal(preferences, chrome.WorkspacePreferences);
+            Assert.Equal(preferences with { CollapseToActive = false }, chrome.WorkspacePreferences);
             Assert.Equal(compact, chrome.IsCompactTabMode);
             Assert.Equal(compact, StaTest.FindByAutomationName<TabControllerControl>(
                 chrome, "Browser tab controller").IsCompactMode);
@@ -262,7 +298,7 @@ public sealed class BrowserChromeVisualTests
             StaTest.Prepare(chrome);
 
             Assert.Equal(0, changes);
-            Assert.Equal(latestPreferences, chrome.WorkspacePreferences);
+            Assert.Equal(latestPreferences with { CollapseToActive = false }, chrome.WorkspacePreferences);
             Assert.True(chrome.IsCompactTabMode);
             Assert.False(chrome.IsDockedTabControllerVisible);
             Assert.True(chrome.IsShowTabsRecoveryVisible);
@@ -639,7 +675,7 @@ public sealed class BrowserChromeVisualTests
     }
 
     [Fact]
-    public void PlacementAndCollapseShortcutsEmitPreferencesAndKeepInactiveTabsReachable()
+    public void PlacementShortcutRemainsAndRetiredCollapseShortcutDoesNotMutateTabs()
     {
         StaTest.Run(() =>
         {
@@ -662,42 +698,98 @@ public sealed class BrowserChromeVisualTests
             var tabScroller = StaTest.FindByAutomationName<ScrollViewer>(chrome, "Tabs");
             Assert.Equal(ScrollBarVisibility.Disabled, tabScroller.VerticalScrollBarVisibility);
 
-            Assert.True(chrome.TryHandleWorkspaceShortcut(
+            Assert.False(chrome.TryHandleWorkspaceShortcut(
                 Key.C,
                 ModifierKeys.Alt | ModifierKeys.Shift));
-            Assert.True(chrome.WorkspacePreferences.CollapseToActive);
-            Assert.NotNull(StaTest.FindByAutomationName<Button>(chrome, "Reference, compact"));
+            Assert.False(chrome.WorkspacePreferences.CollapseToActive);
+            Assert.NotNull(StaTest.FindByAutomationName<Button>(chrome, "Reference"));
             Assert.NotNull(StaTest.FindByAutomationName<Button>(chrome, "Selected"));
-            Assert.Equal(2, changes.Count);
+            Assert.Single(changes);
         });
     }
 
     [Fact]
-    public void InactiveTabDensityControlHasAnExplicitLabelAndEmitsBothPreferenceStates()
+    public void LegacyInactiveCollapsePreferenceIsNormalizedWithoutExposingASecondDensityControl()
     {
         StaTest.Run(() =>
         {
             var chrome = new BrowserChromeControl();
-            var changes = new List<BrowserWorkspacePreferences>();
-            chrome.WorkspacePreferencesChanged += (_, args) => changes.Add(args.Preferences);
+            chrome.ApplyWorkspacePreferences(BrowserWorkspacePreferences.Default with { CollapseToActive = true });
             StaTest.Prepare(chrome);
 
-            var condense = StaTest.FindByAutomationName<Button>(chrome, "Condense inactive tabs");
-            Assert.True(condense.IsEnabled);
-            Assert.Contains("save space", condense.ToolTip?.ToString(), StringComparison.OrdinalIgnoreCase);
-            Assert.Contains(StaTest.Descendants(condense).OfType<TextBlock>(), text =>
-                text.Text == "Condense inactive tabs");
+            Assert.False(chrome.WorkspacePreferences.CollapseToActive);
+            Assert.DoesNotContain(StaTest.Descendants(chrome).OfType<Button>(), button =>
+                AutomationProperties.GetName(button) is "Condense inactive tabs" or "Expand inactive tabs");
+            Assert.False(chrome.TryHandleWorkspaceShortcut(Key.C, ModifierKeys.Alt | ModifierKeys.Shift));
+        });
+    }
 
-            condense.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    [Fact]
+    public void EmbeddedCaptionRoutesWindowCommandsAndReflectsRestoreState()
+    {
+        StaTest.Run(() =>
+        {
+            var chrome = new BrowserChromeControl();
+            var minimize = 0;
+            var maximizeRestore = 0;
+            var close = 0;
+            var drag = 0;
+            chrome.WindowMinimizeRequested += (_, _) => minimize++;
+            chrome.WindowMaximizeRestoreRequested += (_, _) => maximizeRestore++;
+            chrome.WindowCloseRequested += (_, _) => close++;
+            chrome.WindowDragRequested += (_, _) => drag++;
+            StaTest.Prepare(chrome, 1000, 700);
 
-            Assert.True(Assert.Single(changes).CollapseToActive);
-            var expand = StaTest.FindByAutomationName<Button>(chrome, "Expand inactive tabs");
-            Assert.Equal("On", AutomationProperties.GetItemStatus(expand));
-            Assert.Contains("Restore full titles", expand.ToolTip?.ToString(), StringComparison.OrdinalIgnoreCase);
-            expand.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            StaTest.FindByAutomationName<Button>(chrome, "Minimize window")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            StaTest.FindByAutomationName<Button>(chrome, "Maximize window")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            StaTest.FindByAutomationName<Button>(chrome, "Close window")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var dragRegion = StaTest.FindByAutomationName<Border>(chrome, "Move window");
+            dragRegion.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+            {
+                RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent,
+            });
 
-            Assert.False(changes.Last().CollapseToActive);
-            Assert.Equal(2, changes.Count);
+            Assert.Equal(1, minimize);
+            Assert.Equal(1, maximizeRestore);
+            Assert.Equal(1, close);
+            Assert.Equal(1, drag);
+            chrome.ApplyWindowState(true);
+            Assert.True(chrome.IsWindowMaximized);
+            Assert.NotNull(StaTest.FindByAutomationName<Button>(chrome, "Restore window"));
+            Assert.All(
+                StaTest.Descendants(chrome.WindowCaptionHost).OfType<Button>(),
+                button => Assert.True(button.ActualWidth >= 44 && button.ActualHeight >= 40));
+        });
+    }
+
+    [Theory]
+    [InlineData(TabStripPlacement.Left)]
+    [InlineData(TabStripPlacement.Right)]
+    public void NarrowSideLayoutsKeepCaptionSeparateAndPrioritizeAddressField(TabStripPlacement placement)
+    {
+        StaTest.Run(() =>
+        {
+            var chrome = new BrowserChromeControl();
+            chrome.SetBrowsingContext(Browsing(BrowserProfileMode.Private));
+            chrome.WorkspacePreferencesChanged += (_, _) => { };
+            chrome.ApplyWorkspacePreferences(BrowserWorkspacePreferences.Default with { TabStripPlacement = placement });
+            StaTest.Prepare(chrome, 640, 600);
+
+            var address = StaTest.FindByAutomationName<TextBox>(chrome, "Address and search");
+            var home = StaTest.FindByAutomationName<Button>(chrome, "Go to home page");
+            var placementButton = StaTest.FindByAutomationName<Button>(chrome, "Change tab placement");
+            var addressRight = address.TranslatePoint(new Point(address.ActualWidth, 0), chrome).X;
+            var captionLeft = chrome.WindowCaptionHost.TranslatePoint(new Point(), chrome).X;
+
+            Assert.True(address.ActualWidth >= 120);
+            Assert.True(addressRight <= captionLeft + 1);
+            Assert.Equal(Visibility.Collapsed, home.Visibility);
+            Assert.Equal(Visibility.Collapsed, placementButton.Visibility);
+            Assert.Equal(0, Grid.GetColumn(chrome.WindowCaptionHost));
+            Assert.Equal(2, Grid.GetColumnSpan(chrome.WindowCaptionHost));
         });
     }
 
@@ -913,7 +1005,7 @@ public sealed class BrowserChromeVisualTests
             var menu = Assert.IsType<ContextMenu>(menuButton.ContextMenu);
             var commands = menu.Items.OfType<MenuItem>().ToArray();
 
-            Assert.Equal(10, commands.Length);
+            Assert.Equal(17, commands.Length);
             Assert.All(commands, command =>
             {
                 Assert.False(command.IsEnabled);
@@ -938,6 +1030,7 @@ public sealed class BrowserChromeVisualTests
             chrome.PrivateWindowRequested += (_, _) => { };
             BrowserWorkspacePreferences? requestedPreferences = null;
             chrome.WorkspacePreferencesChanged += (_, args) => requestedPreferences = args.Preferences;
+            chrome.CompactTabModeChangeRequested += (_, _) => { };
             UtilitySurfaceRequestedEventArgs? requested = null;
             chrome.UtilitySurfaceRequested += (_, args) => requested = args;
             chrome.OfflineReadingActionRequested += (_, _) => { };
@@ -1125,9 +1218,14 @@ public sealed class BrowserChromeVisualTests
                 Assert.True(dockedRequest.FocusWhenShown);
                 Assert.False(chrome.IsResourceMonitorVisible);
                 var presentationPopups = StaTest.Descendants(chrome).OfType<Popup>().ToArray();
-                Assert.Single(presentationPopups);
-                Assert.Same(chrome.QuickView.OverlayPopup, presentationPopups[0]);
-                Assert.False(presentationPopups[0].IsOpen);
+                var quickViewPopups = chrome.QuickView.Children.OfType<Popup>().ToArray();
+                Assert.Equal(2, quickViewPopups.Length);
+                Assert.Equal(quickViewPopups.Length, presentationPopups.Length);
+                Assert.All(presentationPopups, popup => Assert.Contains(popup, quickViewPopups));
+                Assert.Contains(chrome.QuickView.OverlayPopup, quickViewPopups);
+                Assert.Single(quickViewPopups, popup => popup.AllowsTransparency);
+                Assert.InRange(quickViewPopups.Count(popup => popup.IsOpen), 0, 1);
+                Assert.All(presentationPopups, popup => Assert.False(popup.IsOpen));
 
                 chrome.ApplyResourceMonitorVisibility(true);
                 Assert.True(chrome.IsResourceMonitorVisible);
@@ -1393,16 +1491,23 @@ public sealed class BrowserChromeVisualTests
             try
             {
                 window.UpdateLayout();
-                var toggle = StaTest.FindByAutomationName<Button>(chrome, "Use compact favicon-only tabs");
+                var menuButton = StaTest.FindByAutomationName<Button>(chrome, "Open browser menu");
+                menuButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var menu = Assert.IsType<ContextMenu>(menuButton.ContextMenu);
+                var toggle = menu.Items.OfType<MenuItem>().Single(item =>
+                    AutomationProperties.GetName(item) == "Compact tabs");
                 Assert.True(toggle.IsEnabled);
-                toggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.False(toggle.IsChecked);
+                toggle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                 Assert.True(request?.IsCompactModeRequested);
                 Assert.False(chrome.IsCompactTabMode);
 
                 chrome.ApplyCompactTabMode(true);
                 Assert.True(chrome.IsCompactTabMode);
-                Assert.Equal("Compact tabs on", AutomationProperties.GetItemStatus(
-                    StaTest.FindByAutomationName<Button>(chrome, "Show tab titles")));
+                menuButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                menu = Assert.IsType<ContextMenu>(menuButton.ContextMenu);
+                Assert.True(menu.Items.OfType<MenuItem>().Single(item =>
+                    AutomationProperties.GetName(item) == "Compact tabs").IsChecked);
                 var docked = StaTest.FindByAutomationName<TabControllerControl>(chrome, "Browser tab controller");
                 Assert.True(docked.IsCompactMode);
                 var detached = chrome.CreateDetachedTabControllerControl();
@@ -1466,7 +1571,7 @@ public sealed class BrowserChromeVisualTests
             {
                 var address = StaTest.FindByAutomationName<TextBox>(chrome, "Address and search");
                 address.Text = "https://example.test/glyphs?q=gjpqy";
-                AssertFixedHeightTextLayout(address, 40, scale);
+                AssertFixedHeightTextLayout(address, 44, scale);
             }
             finally
             {
