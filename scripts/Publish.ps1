@@ -43,9 +43,12 @@ Reset-OrbitPublishDirectory -Path $rootApp -ExpectedPath (Join-Path $projectRoot
 
 & (Join-Path $PSScriptRoot "Publish-Launcher.ps1") -Version $Version -Configuration $Configuration
 
+# Each executable declares win-x64 locally. Passing --runtime as a global
+# property also changes every referenced library's lock graph and breaks the
+# normal locked solution restore. Keep the same checked-in graph for both.
 & $dotnet publish (Join-Path $projectRoot "src\OrbitNavigator.App\OrbitNavigator.App.csproj") `
     --configuration $Configuration `
-    --runtime win-x64 `
+    -p:RestoreLockedMode=true `
     --self-contained true `
     -p:Version=$Version `
     --output $appOutput `
@@ -54,7 +57,7 @@ Assert-LastExitCode "Application publish"
 
 & $dotnet publish (Join-Path $projectRoot "src\OrbitNavigator.UpdateRunner\OrbitNavigator.UpdateRunner.csproj") `
     --configuration $Configuration `
-    --runtime win-x64 `
+    -p:RestoreLockedMode=true `
     --self-contained true `
     -p:Version=$Version `
     --output $updateRunnerOutput `
