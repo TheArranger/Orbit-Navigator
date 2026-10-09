@@ -724,7 +724,11 @@ public sealed class WebView2HostControl : UserControl, IAsyncDisposable
                 args.IsUserInitiated,
                 out var target))
         {
-            NewTabRequested?.Invoke(this, new(target!, args.IsUserInitiated));
+            // WebView2 does not expose the new-window gesture's mouse button,
+            // modifiers, or disposition. Keep page-requested tabs in the
+            // background (including native middle/Ctrl-click and target=_blank)
+            // instead of guessing from global input state after the gesture.
+            NewTabRequested?.Invoke(this, new(target!, args.IsUserInitiated, activate: false));
             return;
         }
         _ = _diagnostics.WriteAsync(new LocalDiagnosticEvent(

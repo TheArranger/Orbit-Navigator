@@ -1783,6 +1783,7 @@ public sealed class BrowserChromeControl : Grid
         AutomationProperties.SetName(close, $"Close {tab.Title}");
         close.Click += (_, _) => RequestCloseTab(tab.TabId);
         var container = new StackPanel { Orientation = Orientation.Horizontal };
+        TabMiddleClickCloseGesture.Attach(container, () => RequestCloseTab(tab.TabId), () => dragSourceTabId = null);
         container.Children.Add(select);
         container.Children.Add(close);
         tabButtons.Add(tab.TabId, select);

@@ -90,8 +90,8 @@
       "orbitnavigator.clipboardshelf.presentation": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.2.2, )",
-          "OrbitNavigator.Presentation": "[0.2.2, )"
+          "OrbitNavigator.Contracts": "[0.2.3, )",
+          "OrbitNavigator.Presentation": "[0.2.3, )"
         }
       },
       "orbitnavigator.contracts": {
@@ -100,7 +100,7 @@
       "orbitnavigator.presentation": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.2.2, )"
+          "OrbitNavigator.Contracts": "[0.2.3, )"
         }
       }
     }

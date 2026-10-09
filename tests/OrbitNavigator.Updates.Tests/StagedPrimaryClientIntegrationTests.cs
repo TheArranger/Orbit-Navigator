@@ -14,9 +14,9 @@ public sealed class StagedPrimaryClientIntegrationTests(ITestOutputHelper output
 {
     private const string ManifestVariable = "ORBIT_PRIMARY_MANIFEST_UNDER_TEST";
     private const string PackageVariable = "ORBIT_PRIMARY_PACKAGE_UNDER_TEST";
-    private static readonly Version CandidateVersion = new(0, 2, 2);
+    private static readonly Version CandidateVersion = new(0, 2, 3);
     private static readonly Uri PackageUri = new(
-        "https://orbit-nav-updater.snap-it.cc/primary/OrbitNavigator-0.2.2.exe");
+        "https://orbit-nav-updater.snap-it.cc/primary/OrbitNavigator-0.2.3.exe");
 
     [StagedPrimaryFact]
     public async Task SealedCandidateOffersDownloadsRetainsAndRequiresConfirmationWithoutNetworkOrLaunch()
@@ -48,10 +48,10 @@ public sealed class StagedPrimaryClientIntegrationTests(ITestOutputHelper output
         {
             var store = new FileUpdateClientStateStore(statePath);
             await store.SaveAsync(UpdateClientState.CreateNew().WithAcceptedReleaseSequence(
-                UpdateReleaseChannel.Primary, 5), token);
+                UpdateReleaseChannel.Primary, 6), token);
             string stagedPath;
             long acceptedSequence;
-            await using (var client = Create(new Version(0, 1, 28)))
+            await using (var client = Create(new Version(0, 2, 2)))
             {
                 await client.InitializeAsync(token);
                 AssertSuccess(await client.CheckAsync(token), PrimaryUpdateLifecycle.Available);
@@ -59,7 +59,7 @@ public sealed class StagedPrimaryClientIntegrationTests(ITestOutputHelper output
                 var offer = Assert.IsType<VerifiedUpdateManifest>(client.Snapshot.AvailableManifest);
                 Assert.Equal(CandidateVersion, offer.Package.Version);
                 Assert.Equal(PackageUri, offer.Package.DownloadUri);
-                Assert.True(offer.ReleaseSequence > 5);
+                Assert.True(offer.ReleaseSequence > 6);
                 Assert.Equal(sealedPackage.Length, offer.Package.SizeBytes);
                 Assert.Empty(packageResponses);
                 acceptedSequence = offer.ReleaseSequence;
@@ -85,7 +85,7 @@ public sealed class StagedPrimaryClientIntegrationTests(ITestOutputHelper output
                 Assert.Equal(manifestHash, state.PrimaryAcceptedManifestSha256);
             }
 
-            await using (var restarted = Create(new Version(0, 1, 28)))
+            await using (var restarted = Create(new Version(0, 2, 2)))
             {
                 await restarted.InitializeAsync(token);
                 AssertSuccess(await restarted.CheckAsync(token), PrimaryUpdateLifecycle.ReadyToInstall);
@@ -100,7 +100,7 @@ public sealed class StagedPrimaryClientIntegrationTests(ITestOutputHelper output
 
             // Simulate only the running assembly version changing after install.
             // Nothing installs, executes, or alters the sealed input package.
-            await using (var installed = Create(new Version(0, 2, 2, 0)))
+            await using (var installed = Create(new Version(0, 2, 3, 0)))
             {
                 await installed.InitializeAsync(token);
                 AssertSuccess(await installed.CheckAsync(token), PrimaryUpdateLifecycle.UpToDate);
@@ -112,7 +112,7 @@ public sealed class StagedPrimaryClientIntegrationTests(ITestOutputHelper output
             }
             Assert.Single(packageResponses);
             Assert.Equal(0, launcher.Calls);
-            output.WriteLine($"Verified sealed 0.2.2 sequence {acceptedSequence} from installed 0.1.28/high-water 5: " +
+            output.WriteLine($"Verified sealed 0.2.3 sequence {acceptedSequence} from installed 0.2.2/high-water 6: " +
                 "200/304 offer, integrity-checked local download, restart recovery, mandatory confirmation, installed UpToDate. " +
                 "Real pinned-key verification and Authenticode inspection; zero network and installer launches.");
         }
