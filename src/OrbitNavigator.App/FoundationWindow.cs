@@ -825,13 +825,18 @@ public sealed class FoundationWindow : Window
             !result.IsSuccess);
     }
 
-    private async Task CreateTabAsync(CreateTabBrowserCommand command)
+    private async Task CreateTabAsync(CreateTabBrowserCommand command, bool activate = true)
     {
         if (command.TabId.IsEmpty || TabExists(command.TabId)) return;
         var context = new BrowsingContext(_privacy, _windowId, command.TabId, null);
         var prepared = await _prepareHost(context);
         if (prepared is null) return;
         var host = prepared.Host;
+        // Attached but hidden still lets WebView2 initialize. In particular, a
+        // page-requested background tab must never cover or take input from its
+        // opener while the new controller is being prepared.
+        host.Visibility = Visibility.Hidden;
+        host.IsHitTestVisible = false;
         _hosts.Add(command.TabId, host);
         AttachHost(host);
         _webSurface.Children.Add(host);
@@ -845,12 +850,14 @@ public sealed class FoundationWindow : Window
             _webSurface.Children.Remove(host);
             return;
         }
+        host.Visibility = Visibility.Collapsed;
+        host.IsHitTestVisible = true;
 
         var added = await _workspaceCoordinator.ExecuteAsync(new AddWorkspaceTabAction(
             _windowId,
             _workspaceCoordinator.Current.Revision,
             NewTab(command.TabId, _privacy.IsPrivate) with { GroupId = command.GroupId },
-            Select: true));
+            Select: activate));
         if (!added.IsSuccess)
         {
             DetachHost(host);
@@ -873,7 +880,8 @@ public sealed class FoundationWindow : Window
                     Title = initialTarget.Host,
                     LoadState = BrowserLoadState.Loading,
                 });
-                await LoadProtectionAsync(host);
+                if (_browserState.SelectedTabId == command.TabId)
+                    await LoadProtectionAsync(host);
             }
         }
         ShowSelectedHost();
@@ -1516,7 +1524,7 @@ public sealed class FoundationWindow : Window
             _windowId,
             new BrowserTabId(Guid.NewGuid()),
             args.Target,
-            null));
+            null), activate: args.Activate);
     }
 
     private async void OnHostNavigationCompleted(
@@ -2420,7 +2428,7 @@ public sealed class FoundationWindow : Window
             _windowId,
             new BrowserTabId(Guid.NewGuid()),
             args.Target,
-            null));
+            null), activate: args.Activate);
     }
 
     private BrowserTabState? SelectedTab() => _browserState.SelectedTabId is { } selectedId

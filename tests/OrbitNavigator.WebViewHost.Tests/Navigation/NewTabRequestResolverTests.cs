@@ -10,6 +10,10 @@ public sealed class NewTabRequestResolverTests
     [Theory]
     [InlineData("javascript:alert(1)")]
     [InlineData("file:///C:/private.txt")]
+    [InlineData("data:text/html,hello")]
+    [InlineData("blob:https://example.test/123")]
+    [InlineData("ftp://example.test/path")]
+    [InlineData("/relative/path")]
     [InlineData("https://user:password@example.test/")]
     [InlineData("")]
     public void UnsafePopupTargetsFailClosedBeforeReachingBrowser(string requested)

@@ -639,6 +639,7 @@ public sealed class TabControllerControl : Grid
                 : new Thickness(0, 0, dense ? 0 : 3, 0),
             HorizontalAlignment = HorizontalAlignment.Left,
         };
+        AttachMiddleClickClose(card, tab.TabId);
         card.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         card.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         card.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -1087,6 +1088,7 @@ public sealed class TabControllerControl : Grid
             var label = string.IsNullOrWhiteSpace(tab.Title) ? tab.Address?.Host ?? "New Tab" : tab.Title;
             var item = MenuItem(label, async () => await ExecuteAsync(
                 new SelectTabControllerAction(Guid.NewGuid(), tab.TabId)));
+            AttachMiddleClickClose(item, tab.TabId);
             AutomationProperties.SetHelpText(item, tab.Address is null ? "Switch to this tab." : $"{tab.Address}. Switch to this tab.");
             menu.Items.Add(item);
         }
@@ -1589,6 +1591,7 @@ public sealed class TabControllerControl : Grid
                         IsCheckable = true,
                         IsChecked = tab.IsSelected,
                     };
+                    AttachMiddleClickClose(row, tab.TabId);
                     AutomationProperties.SetName(row,
                         $"{contextLabel}, {(tab.IsSelected ? "selected" : "not selected")}");
                     row.Items.Add(MenuItem("Switch", async () => await ExecuteAsync(new SelectTabControllerAction(Guid.NewGuid(), tab.TabId))));
@@ -1738,15 +1741,14 @@ public sealed class TabControllerControl : Grid
 
     private async void RequestCloseTab(BrowserTabId tabId)
     {
-        if (!CanCloseTabs())
-        {
-            announcer.Text = "The only tab stays open. Create another tab before closing it.";
-            return;
-        }
-
+        // The command owner, not a potentially stale visual projection, decides
+        // whether this tab can close (including the sole-tab policy).
         pendingCloseFocusTabId = tabId;
         await ExecuteAsync(new CloseTabControllerAction(Guid.NewGuid(), tabId));
     }
+
+    private void AttachMiddleClickClose(UIElement target, BrowserTabId tabId) =>
+        TabMiddleClickCloseGesture.Attach(target, () => RequestCloseTab(tabId), () => dragSourceTabId = null);
 
     private void OnPresentationChanged(object? sender, TabControllerPresentationChangedEventArgs args)
     {
@@ -1802,8 +1804,15 @@ public sealed class TabControllerControl : Grid
         }
 
         var restoreAfterClose = pendingCloseFocusTabId is { } closedTabId &&
-            !acceptedState.Projection.Tabs.Entries.OfType<BrowserTabEntry>()
-                .Any(tab => tab.TabId == closedTabId);
+            !acceptedState.Projection.Tabs.Entries.Any(entry => entry switch
+            {
+                BrowserTabEntry tab => tab.TabId == closedTabId,
+                // Collapsed members are represented by their group header,
+                // not by rows. A stale/denied close must not look successful.
+                TabGroupHeaderEntry group => group.TabIds.Contains(closedTabId) ||
+                    group.TabPreviews.Any(tab => tab.TabId == closedTabId),
+                _ => false,
+            });
         state = acceptedState;
         if (restoreAfterClose)
         {

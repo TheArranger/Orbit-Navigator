@@ -8,6 +8,15 @@ is bundled with the browser for offline reading in Settings.
 
 No additional unreleased Windows changes.
 
+## 0.2.3 - 2026-10-08
+
+- Middle-click a tab to close it in docked, detached, grouped, and overflow
+  views, without selecting it first. The existing last-tab safety rule remains.
+- Page-requested new tabs (including middle-clicked links) open in the
+  background, including from Quick View. Explicit New Tab and Duplicate
+  commands still select their new tab. WebView2 does not expose a reliable
+  per-gesture foreground/background distinction for page new-window requests.
+
 ## 0.2.2 - 2026-10-08
 
 - Combine the Windows improvements from the 0.2.1 development cycle with the

@@ -8,6 +8,57 @@ namespace OrbitNavigator.Foundation.Tests.Browser;
 
 public sealed class BrowserWorkspaceCoordinatorTests
 {
+    [Theory]
+    [InlineData(BrowserProfileMode.Normal)]
+    [InlineData(BrowserProfileMode.Private)]
+    public async Task BackgroundLinkTabsKeepOpenerSelectedAndCloseWithoutSelectingThem(BrowserProfileMode mode)
+    {
+        using var temp = new TempDirectory();
+        var context = Context(mode);
+        var window = new BrowserWindowId(Guid.NewGuid());
+        OrbitNavigator.Contracts.Infrastructure.IProfileStorage storage = context.IsPrivate
+            ? new ThrowingStorage()
+            : new FileProfileStorage(temp.Path);
+        var sessions = new BrowserWorkspaceSessionStore(storage);
+        var opener = Tab("Opener", context.IsPrivate);
+        var created = await BrowserWorkspaceCoordinator.CreateAsync(
+            context, window, new BrowserState(window, opener.TabId, [opener]),
+            new TabGroupMetadataStore(storage), context.IsPrivate ? null : sessions);
+        Assert.True(created.IsSuccess, created.Error?.MessageKey);
+        await using var coordinator = created.Value!;
+        var background = Tab("Background link", context.IsPrivate) with
+        {
+            Address = new Uri("https://link.orbit.test/page"),
+        };
+
+        var added = await coordinator.ExecuteAsync(new AddWorkspaceTabAction(
+            window, coordinator.Current.Revision, background, Select: false));
+        Assert.True(added.IsSuccess);
+        Assert.Equal(opener.TabId, added.Value!.Snapshot.Browser.SelectedTabId);
+        Assert.Equal([opener.TabId, background.TabId],
+            added.Value.Snapshot.Browser.Tabs.Select(tab => tab.TabId));
+        Assert.All(added.Value.Snapshot.Browser.Tabs, tab => Assert.Equal(context.IsPrivate, tab.IsPrivate));
+        if (!context.IsPrivate)
+        {
+            var durable = await sessions.LoadAsync(context);
+            Assert.True(durable.IsSuccess);
+            Assert.Equal(opener.TabId, durable.Value!.SelectedTabId);
+            Assert.Equal(2, durable.Value.Tabs.Count);
+        }
+
+        var closed = await coordinator.ExecuteAsync(new CloseWorkspaceTabsAction(
+            window, coordinator.Current.Revision, [background.TabId]));
+        Assert.True(closed.IsSuccess);
+        Assert.Equal(opener.TabId, closed.Value!.Snapshot.Browser.SelectedTabId);
+        Assert.Equal(opener.TabId, Assert.Single(closed.Value.Snapshot.Browser.Tabs).TabId);
+        var soleClose = await coordinator.ExecuteAsync(new CloseWorkspaceTabsAction(
+            window, coordinator.Current.Revision, [opener.TabId]));
+        Assert.False(soleClose.IsSuccess);
+        Assert.Single(coordinator.Current.Browser.Tabs);
+
+        if (context.IsPrivate) Assert.Empty(Directory.EnumerateFileSystemEntries(temp.Path));
+    }
+
     [Fact]
     public async Task CommandsCarryRevisionAndStaleActionDoesNotMutate()
     {
