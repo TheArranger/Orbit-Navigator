@@ -1,0 +1,57 @@
+plugins { id 'com.android.application' }
+
+// Windows and Android consume the same repository-owned product version.
+def versionSource = new XmlSlurper().parse(file('../../Versions/ProductVersion.props'))
+def productVersion = versionSource.PropertyGroup.OrbitProductVersion.text()
+if (!(productVersion ==~ /\d+\.\d+\.\d+/)) {
+    throw new GradleException('ProductVersion.props must contain a three-component version.')
+}
+def parts = productVersion.tokenize('.').collect { it.toInteger() }
+if (parts.any { it > 999 } || parts[0] > 2000) {
+    throw new GradleException('Version exceeds Android versionCode mapping.')
+}
+
+android {
+    namespace 'com.orbitnav.navigator'
+    compileSdk 35
+    buildToolsVersion '35.0.0'
+    defaultConfig {
+        applicationId 'com.orbitnav.navigator'
+        minSdk 28
+        targetSdk 35
+        versionCode parts[0] * 1000000 + parts[1] * 1000 + parts[2]
+        versionName productVersion
+    }
+    buildFeatures { buildConfig true }
+    signingConfigs {
+        debug {
+            storeFile rootProject.file('.tools/debug-signing/orbit-development.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildTypes {
+        debug {
+            // A development install must never overwrite an eventual production profile.
+            applicationIdSuffix '.dev'
+            versionNameSuffix '-dev'
+        }
+        release { minifyEnabled false }
+    }
+    lint { abortOnError true }
+}
+dependencies { implementation project(':core') }
+
+def licenseAssets = layout.buildDirectory.dir('generated/orbit-licenses')
+def stageLicenseAssets = tasks.register('stageLicenseAssets', Sync) {
+    from(file('../../LICENSE'))
+    from(file('../../NOTICE'))
+    into(licenseAssets.map { it.dir('licenses') })
+}
+android.sourceSets.main.assets.srcDir(licenseAssets)
+tasks.named('preBuild').configure { dependsOn stageLicenseAssets }

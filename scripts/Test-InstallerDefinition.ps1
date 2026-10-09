@@ -23,7 +23,7 @@ if ($shortcuts -notmatch $launchTaskPattern) {
 
 $launchEntry = [regex]::Match(
     $shortcuts,
-    '(?im)^Filename:\s*"\{app\}\\Orbit Navigator\.exe";[^\r\n]*$')
+    '(?im)^Filename:\s*"\{app\}\\Orbit Navigator\.exe";[^\r\n]*\r?$')
 if (-not $launchEntry.Success) {
     throw "The installer launch entry is missing."
 }

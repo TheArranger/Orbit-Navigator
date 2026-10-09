@@ -75,6 +75,25 @@ public sealed class MyOrbitAuthorizationProtocolTests
         Assert.Equal(ControllerErrorCode.IntegrityFailure, result.Error?.Code);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("orbit.navigator.link orbit.navigator.link")]
+    [InlineData(" orbit.navigator.link")]
+    [InlineData("orbit.navigator.link ")]
+    [InlineData("ORBIT.NAVIGATOR.LINK")]
+    [InlineData("orbit.sync.devices orbit.navigator.link")]
+    public async Task LinkOnlyResponseRejectsEmptyDuplicatedExpandedOrMalformedGrant(string? scope)
+    {
+        var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK, TokenResponse(scope)));
+        using var protocol = Protocol(handler);
+        using var refresh = new SensitiveUtf8Buffer(Token("mort_"));
+        var result = await protocol.RefreshAsync(refresh, CancellationToken.None);
+        Assert.Equal(ControllerErrorCode.IntegrityFailure, result.Error?.Code);
+        Assert.Null(result.Value);
+    }
+
     [Fact]
     public async Task DuplicateSecurityCriticalTokenFieldFailsClosed()
     {
@@ -134,7 +153,7 @@ public sealed class MyOrbitAuthorizationProtocolTests
         new TestClock(),
         handler);
 
-    private static object TokenResponse(string scope) => new
+    private static object TokenResponse(string? scope) => new
     {
         token_type = "Bearer",
         access_token = Encoding.ASCII.GetString(Token("moat_")),

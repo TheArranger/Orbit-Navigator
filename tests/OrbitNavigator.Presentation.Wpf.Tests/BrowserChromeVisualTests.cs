@@ -417,6 +417,76 @@ public sealed class BrowserChromeVisualTests
         });
     }
 
+    [Fact]
+    public void FullscreenEscapeFromNestedWebContentRemainsOwnedByWebView()
+    {
+        StaTest.Run(() =>
+        {
+            var chrome = new BrowserChromeControl();
+            var focusTarget = new TextBox { Text = "Focused web-content surrogate" };
+            chrome.WebContent = new Border
+            {
+                Child = new Grid { Children = { new Border { Child = focusTarget } } },
+            };
+            var exits = 0;
+            chrome.FullscreenExitRequested += (_, _) => exits++;
+            var window = new Window { Content = chrome, Width = 900, Height = 700, ShowInTaskbar = false };
+            window.Show();
+            try
+            {
+                chrome.ApplyFullscreen(true);
+                Keyboard.Focus(focusTarget);
+                Assert.True(focusTarget.IsKeyboardFocusWithin);
+                var args = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(focusTarget)!,
+                    Environment.TickCount, Key.Escape)
+                {
+                    RoutedEvent = Keyboard.PreviewKeyDownEvent,
+                };
+
+                focusTarget.RaiseEvent(args);
+
+                Assert.False(args.Handled);
+                Assert.Equal(0, exits);
+                Assert.True(chrome.IsFullscreen);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void WindowedEscapeRemainsUnhandled()
+    {
+        StaTest.Run(() =>
+        {
+            var chrome = new BrowserChromeControl();
+            var exits = 0;
+            chrome.FullscreenExitRequested += (_, _) => exits++;
+            var window = new Window { Content = chrome, Width = 900, Height = 700, ShowInTaskbar = false };
+            window.Show();
+            try
+            {
+                var args = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(chrome)!,
+                    Environment.TickCount, Key.Escape)
+                {
+                    RoutedEvent = Keyboard.PreviewKeyDownEvent,
+                };
+
+                chrome.RaiseEvent(args);
+
+                Assert.False(args.Handled);
+                Assert.Equal(0, exits);
+                Assert.False(chrome.IsFullscreen);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
     private static void AssertFullscreenContent(BrowserChromeControl chrome, Border webContent, DependencyObject contentParent)
     {
         Assert.True(chrome.IsFullscreen);
@@ -1426,7 +1496,7 @@ public sealed class BrowserChromeVisualTests
                 false,
                 new RoutedShortcutSink(afterClose));
             session.AcceptProjection(initial);
-            var chrome = new BrowserChromeControl();
+            var chrome = new BrowserChromeControl(_ => ModifierKeys.Control);
             chrome.RenderTabs(
                 BrowserStateFromProjection(initial),
                 new Dictionary<BrowserTabGroupId, TabGroupPresentation>());
@@ -1446,27 +1516,35 @@ public sealed class BrowserChromeVisualTests
             try
             {
                 window.UpdateLayout();
-                var keyboard = new ControlKeyboardDevice(InputManager.Current);
                 var initialButton = StaTest.FindByAutomationName<Button>(chrome, "Surviving tab, tab");
                 Keyboard.Focus(initialButton);
-                RaiseCtrlKey(initialButton, keyboard, Key.T);
+                RaiseCtrlKey(initialButton, Key.T);
                 PumpDispatcherUntil(
                     () => session.Current?.Projection.Revision == 2,
                     TimeSpan.FromSeconds(2));
 
                 var createdButton = StaTest.FindByAutomationName<Button>(chrome, "Created tab, tab");
                 Keyboard.Focus(createdButton);
-                RaiseCtrlKey(createdButton, keyboard, Key.W);
+                RaiseCtrlKey(createdButton, Key.W);
                 PumpDispatcherUntil(
                     () => session.Current?.Projection.Revision == 3 &&
                           Keyboard.FocusedElement is Button focused &&
                           AutomationProperties.GetName(focused) == "Surviving tab, tab",
-                    TimeSpan.FromSeconds(2));
+                    TimeSpan.FromSeconds(2),
+                    () => $"Revision={session.Current?.Projection.Revision}; window active={window.IsActive}; " +
+                          $"focused={Keyboard.FocusedElement?.GetType().Name ?? "null"}/" +
+                          (Keyboard.FocusedElement is DependencyObject element ? AutomationProperties.GetName(element) : string.Empty));
 
                 var survivorButton = StaTest.FindByAutomationName<Button>(chrome, "Surviving tab, tab");
                 Assert.Same(survivorButton, Keyboard.FocusedElement);
                 Assert.True(survivorButton.IsKeyboardFocusWithin);
                 Assert.NotSame(window, Keyboard.FocusedElement);
+
+                // The routed-shortcut test must leave the shared WPF input
+                // pipeline usable. Constructing a second KeyboardDevice adds
+                // another TextCompositionManager and double-completes this.
+                TextCompositionManager.StartComposition(new TextComposition(
+                    InputManager.Current, survivorButton, "x", TextCompositionAutoComplete.On));
             }
             finally
             {
@@ -1807,17 +1885,11 @@ public sealed class BrowserChromeVisualTests
         }
     }
 
-    private sealed class ControlKeyboardDevice(InputManager inputManager) : KeyboardDevice(inputManager)
-    {
-        protected override KeyStates GetKeyStatesFromSystem(Key key) =>
-            key is Key.LeftCtrl or Key.RightCtrl ? KeyStates.Down : KeyStates.None;
-    }
-
-    private static void RaiseCtrlKey(UIElement source, KeyboardDevice keyboard, Key key)
+    private static void RaiseCtrlKey(UIElement source, Key key)
     {
         var presentationSource = PresentationSource.FromVisual(source)
             ?? throw new InvalidOperationException("The routed-key source must be connected to a PresentationSource.");
-        var args = new KeyEventArgs(keyboard, presentationSource, Environment.TickCount, key)
+        var args = new KeyEventArgs(Keyboard.PrimaryDevice, presentationSource, Environment.TickCount, key)
         {
             RoutedEvent = Keyboard.PreviewKeyDownEvent,
             Source = source,
@@ -1826,7 +1898,7 @@ public sealed class BrowserChromeVisualTests
         Assert.True(args.Handled);
     }
 
-    private static void PumpDispatcherUntil(Func<bool> condition, TimeSpan timeout)
+    private static void PumpDispatcherUntil(Func<bool> condition, TimeSpan timeout, Func<string>? failureDetails = null)
     {
         var frame = new DispatcherFrame();
         var timer = new DispatcherTimer(
@@ -1850,7 +1922,7 @@ public sealed class BrowserChromeVisualTests
         Dispatcher.PushFrame(frame);
         timer.Stop();
         timeoutTimer.Stop();
-        Assert.True(condition(), "The dispatcher did not reach the expected Presentation state before timeout.");
+        Assert.True(condition(), "The dispatcher did not reach the expected Presentation state before timeout. " + failureDetails?.Invoke());
     }
 
     private sealed class FakePermissionBroker : IPermissionBroker

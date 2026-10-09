@@ -62,6 +62,36 @@ public sealed class MyOrbitAccountSettingsAdapterTests
         Assert.Null(typeof(MyOrbitAccountSettingsIntent).GetProperty("AttemptId"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExternalBrowserDenialUsesSafeActionableCopyForErrorAndRefreshedStatus(bool queryStatus)
+    {
+        var context = Context(BrowserProfileMode.Normal);
+        const string safeKey = "account.link.external-browser-unavailable";
+        var controller = new FakeController
+        {
+            BeginResult = ControllerResult<MyOrbitExternalLinkReceipt>.Failure(
+                ControllerError.Create(ControllerErrorCode.Unavailable, safeKey)),
+            QueryResult = ControllerResult<OrbitNavigator.Contracts.Accounts.MyOrbitAccountConnectionState>.Success(
+                State(context.Privacy, 1, MyOrbitAccountConnectionStateKind.Failed,
+                    MyOrbitAccountCapabilities.BeginExternalLink, safeKey)),
+        };
+        var adapter = new MyOrbitAccountSettingsAdapter(controller, new FixedClock());
+
+        var result = await adapter.ExecuteAsync(new(
+            Guid.NewGuid(), context.Privacy, 0,
+            queryStatus ? MyOrbitAccountSettingsIntentKind.Query : MyOrbitAccountSettingsIntentKind.BeginExternalLink), context);
+
+        Assert.Equal(queryStatus ? MyOrbitAccountOperationOutcome.Accepted : MyOrbitAccountOperationOutcome.ProviderUnavailable,
+            result.Outcome);
+        Assert.Contains("external browser", result.SafeMessage);
+        Assert.Contains("other than Orbit Navigator", result.SafeMessage);
+        Assert.DoesNotContain(safeKey, result.SafeMessage);
+        Assert.NotNull(result.RefreshedState);
+        Assert.Equal(result.SafeMessage, result.RefreshedState.SafeStatusMessage);
+    }
+
     private static BrowsingContext Context(BrowserProfileMode mode)
     {
         var privacy = new PrivacyContext(
@@ -79,7 +109,8 @@ public sealed class MyOrbitAccountSettingsAdapterTests
         PrivacyContext privacy,
         long revision,
         MyOrbitAccountConnectionStateKind state,
-        MyOrbitAccountCapabilities capabilities) => new(
+        MyOrbitAccountCapabilities capabilities,
+        string? messageKey = null) => new(
             privacy,
             new MyOrbitAccountRevision(revision),
             state,
@@ -88,7 +119,7 @@ public sealed class MyOrbitAccountSettingsAdapterTests
             state == MyOrbitAccountConnectionStateKind.LinkPending
                 ? [MyOrbitAccountScope.LinkAccount, MyOrbitAccountScope.ManageLinkedDevices]
                 : [],
-            state == MyOrbitAccountConnectionStateKind.LinkPending ? "account.link.pending" : null,
+            messageKey ?? (state == MyOrbitAccountConnectionStateKind.LinkPending ? "account.link.pending" : null),
             null,
             null,
             null,
@@ -106,6 +137,7 @@ public sealed class MyOrbitAccountSettingsAdapterTests
         public string? DeviceDisplayName { get; private set; }
         public MyOrbitLinkAttemptId? CancelAttempt { get; private set; }
         public ControllerResult<MyOrbitExternalLinkReceipt>? BeginResult { get; init; }
+        public ControllerResult<OrbitNavigator.Contracts.Accounts.MyOrbitAccountConnectionState>? QueryResult { get; init; }
         public ControllerResult<OrbitNavigator.Contracts.Accounts.MyOrbitAccountConnectionState>? CancelResult { get; init; }
 
         public ValueTask<ControllerResult<OrbitNavigator.Contracts.Accounts.MyOrbitAccountConnectionState>> QueryAsync(
@@ -113,7 +145,7 @@ public sealed class MyOrbitAccountSettingsAdapterTests
             CancellationToken cancellationToken = default)
         {
             CallCount++;
-            return ValueTask.FromResult(ControllerResult<OrbitNavigator.Contracts.Accounts.MyOrbitAccountConnectionState>.Failure(
+            return ValueTask.FromResult(QueryResult ?? ControllerResult<OrbitNavigator.Contracts.Accounts.MyOrbitAccountConnectionState>.Failure(
                 ControllerError.Create(ControllerErrorCode.Unavailable, "account.link.provider-unavailable")));
         }
 

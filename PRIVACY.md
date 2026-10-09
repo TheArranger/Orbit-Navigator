@@ -52,3 +52,21 @@ or browser-usage telemetry.
 Bug reports are voluntary. Orbit does not automatically attach logs, browsing
 history, URLs, page contents, screenshots, or account information. Reporters
 choose what to provide and should remove personal or sensitive information.
+
+Settings > Report a problem opens an ordinary Orbit tab only after the user
+clicks an action. The private Portfolio form link contains only the fixed
+Orbit Navigator project and Windows platform; adding the application version
+is optional and off by default. No current address, browsing context, profile
+identifier, device identifier, diagnostics, or attachment is put in the link.
+The destination receives ordinary network metadata and uses its own website
+session, if already signed in; Orbit does not copy account credentials between
+profiles or into a reporting API.
+The separate Copy private report link action replaces the clipboard only when
+clicked, uses the same reviewed context, and makes no network request.
+
+The Portfolio website requires sign-in and lets the reporter review the form
+and optionally type environment details or select redacted screenshots. Only
+submission confirmed by that website creates a private work order. Opening
+the form does not submit a report. The separately labeled GitHub fallback
+creates a public issue, not a Portfolio work order; security vulnerabilities
+use the private process in `SECURITY.md`.

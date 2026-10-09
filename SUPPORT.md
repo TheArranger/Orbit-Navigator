@@ -1,9 +1,23 @@
 # Support and bug reports
 
-Orbit Navigator is currently an early open-source project. Ordinary defects
-should use the repository's structured
-[Bug report](https://github.com/TheArranger/Orbit-Navigator/issues/new?template=bug_report.yml)
-issue form.
+Orbit Navigator is currently an early open-source project. In Settings,
+**Report a problem** opens the
+[private Portfolio report form](https://iamtheparadox.com/report-issue?project=orbit-navigator&platform=windows)
+in an Orbit tab. Sign in to your Portfolio account, describe the issue, and
+review the report before submitting. A private bug work order is created only
+after the website confirms submission; opening a form is not delivery.
+
+The link supplies only the Orbit Navigator project and Windows platform.
+Including the displayed app version is optional and off by default. You may
+type optional environment details and choose redacted screenshots on the
+website; Orbit does not collect either automatically.
+
+If the Portfolio service is unavailable, retry later or deliberately use the
+repository's structured
+[public GitHub bug form](https://github.com/TheArranger/Orbit-Navigator/issues/new?template=bug_report.yml).
+GitHub issues are public and do not create a Portfolio work order.
+You can also explicitly copy the private form link to open it later; copying
+does not submit a report or make a network request.
 
 Before reporting:
 
@@ -25,6 +39,7 @@ maintainer work is also collected at [iamtheparadox.com](https://iamtheparadox.c
 Neither link contains a tracking query, and donations never unlock required
 security fixes or preferential vulnerability handling.
 
-The verified public destination for a future in-app “Report a problem” link is
-the structured Bug report URL above. Product wiring and release verification
-remain separate from establishing this support endpoint.
+The Portfolio link follows its documented project/platform/version handoff
+contract. Orbit does not embed API keys, submit work orders directly, or send
+browser state to the website. If a page fails to load or sign-in cannot be
+completed, no report has been submitted by Orbit.

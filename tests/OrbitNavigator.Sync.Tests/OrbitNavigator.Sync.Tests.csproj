@@ -17,4 +17,7 @@
     <ProjectReference Include="..\..\src\OrbitNavigator.Contracts\OrbitNavigator.Contracts.csproj" />
     <ProjectReference Include="..\..\src\OrbitNavigator.Sync\OrbitNavigator.Sync.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Interop\v1-vectors.json" />
+  </ItemGroup>
 </Project>

@@ -85,6 +85,36 @@ public sealed class LocalSyncProfileBindingStoreTests
     }
 
     [Fact]
+    public async Task SimultaneousFirstBindingsAcrossStoreInstancesCannotReplaceAccountIdentity()
+    {
+        var storage = new MemoryStorage { PauseFirstWrite = true };
+        var firstStore = new LocalSyncProfileBindingStore(storage);
+        var competingStore = new LocalSyncProfileBindingStore(storage);
+        var browsing = Browsing(BrowserProfileMode.Normal, LocalProfile);
+        var first = firstStore.BindAsync(browsing, new(Guid.NewGuid()), AccountSyncProfile,
+            LocalSyncProfileBindingKind.JoinedAccount).AsTask();
+        await storage.FirstWriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var competing = competingStore.BindAsync(browsing, new(Guid.NewGuid()), new(Guid.NewGuid()),
+            LocalSyncProfileBindingKind.JoinedAccount).AsTask();
+        try
+        {
+            // A second instance must wait before its read, not race an initial
+            // missing entry and perform another unconditional first write.
+            Assert.False(competing.IsCompleted);
+            Assert.Equal(1, storage.WriteCount);
+        }
+        finally
+        {
+            storage.ReleaseFirstWrite.TrySetResult();
+        }
+        Assert.True((await first).IsSuccess);
+        Assert.Equal(ControllerErrorCode.Conflict, (await competing).Error?.Code);
+        var loaded = await competingStore.LoadAsync(browsing, new(Guid.NewGuid()));
+        Assert.Equal(AccountSyncProfile, loaded.Value!.SyncProfileId);
+        Assert.Equal(1, storage.WriteCount);
+    }
+
+    [Fact]
     public async Task OriginCannotClaimForeignSyncProfile()
     {
         var storage = new MemoryStorage();
@@ -159,6 +189,9 @@ public sealed class LocalSyncProfileBindingStoreTests
         public ProfileStorageRevision? Revision { get; private set; }
         public int CallCount { get; private set; }
         public int WriteCount { get; private set; }
+        public bool PauseFirstWrite { get; init; }
+        public TaskCompletionSource FirstWriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseFirstWrite { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ValueTask<ControllerResult<ProfileStorageEntry>> ReadAsync(
             ProfileStorageAddress address,
@@ -171,16 +204,20 @@ public sealed class LocalSyncProfileBindingStoreTests
                 : ProfileStorageEntry.Create(Revision!.Value, Payload));
         }
 
-        public ValueTask<ControllerResult<ProfileStorageWriteReceipt>> WriteAsync(
+        public async ValueTask<ControllerResult<ProfileStorageWriteReceipt>> WriteAsync(
             ProfileStorageWriteRequest request,
             CancellationToken cancellationToken = default)
         {
             CallCount++;
             WriteCount++;
+            if (PauseFirstWrite && WriteCount == 1)
+            {
+                FirstWriteStarted.TrySetResult();
+                await ReleaseFirstWrite.Task.WaitAsync(cancellationToken);
+            }
             Payload = request.Payload.ToArray();
             Revision = new ProfileStorageRevision(Guid.NewGuid());
-            return ValueTask.FromResult(ControllerResult<ProfileStorageWriteReceipt>.Success(
-                new(Revision.Value)));
+            return ControllerResult<ProfileStorageWriteReceipt>.Success(new(Revision.Value));
         }
 
         public ValueTask<ControllerResult> DeleteAsync(

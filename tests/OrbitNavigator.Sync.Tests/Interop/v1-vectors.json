@@ -1,0 +1,99 @@
+{
+  "fixture_only": true,
+  "profile_id": "22222222222222222222222222222222",
+  "root_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "recovery_code": "ABCD-EFGH-JKLM-NPQR-STUV",
+  "wrapped_keyset": {
+    "keyset_id": "33333333333333333333333333333333",
+    "generation": 0,
+    "wrap_method": "recovery_code",
+    "kdf": {
+      "algorithm": "pbkdf2_sha256",
+      "salt": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "iterations": 600000,
+      "memory_kib": 0,
+      "parallelism": 1,
+      "derived_key_size_bytes": 32
+    },
+    "nonce": "AAECAwQFBgcICQoL",
+    "wrapped_key_ciphertext": "eyHBeFtZSruMpSXS6N7EYA_muLALV2sniXG-GZLbbT8",
+    "authentication_tag": "onQysWm9ucZJtr5RRvtPZg"
+  },
+  "records": [
+    {
+      "record": {
+        "aad": {
+          "protocol_version": 1,
+          "schema_version": 1,
+          "profile_id": "22222222222222222222222222222222",
+          "device_id": "11111111111111111111111111111111",
+          "keyset_id": "33333333333333333333333333333333",
+          "key_epoch": 0,
+          "record_kind": "upsert",
+          "envelope_id": "66666666666666666666666666666666",
+          "category": "history",
+          "entity_id": "55555555555555555555555555555555",
+          "operation_id": null,
+          "client_generation": 0,
+          "client_sequence": 0
+        },
+        "nonce": "AQEBAQEBAQEBAQEB",
+        "ciphertext": "BghvsWENtSxnygRgT6cuRym2gLGcW9yjSBGugd-NDN09WHm4W6aregrJMUP91negL_e_FJesQQ1Z93iKVHgtXG_XimoomE8BGGuY2PUssL6JAwm_XxGh9Zancb3L9zJfj4DjEkOD4--E1LLgikoGNFofHbrOZqXGv5jPKYk",
+        "authentication_tag": "KJD68zaQwbhx88ayk6lECg"
+      },
+      "canonical_aad": "orbit-navigator|sync-aad|protocol=1|schema=1|profile=22222222222222222222222222222222|device=11111111111111111111111111111111|keyset=33333333333333333333333333333333|keyepoch=0|kind=upsert|envelope=66666666666666666666666666666666|category=history|entity=55555555555555555555555555555555|operation=-|clientgeneration=0|clientsequence=0",
+      "plaintext_hex": "52534e4f010055555555555555555555555555555555070000000000000000206d836a24df082e00000068747470733a2f2f666978747572652e696e76616c69642f6e657665722d75706c6f61642d706c61696e746578741500000046697874757265207469746c6520cea920f09f9a8000206d836a24df0804000000",
+      "category_key_hex": "1093e54cffc14c047fb2dfd52be7790a2393902a074cf9762a2fac5df721f637"
+    },
+    {
+      "record": {
+        "aad": {
+          "protocol_version": 1,
+          "schema_version": 1,
+          "profile_id": "22222222222222222222222222222222",
+          "device_id": "11111111111111111111111111111111",
+          "keyset_id": "33333333333333333333333333333333",
+          "key_epoch": 0,
+          "record_kind": "upsert",
+          "envelope_id": "77777777777777777777777777777777",
+          "category": "open_tabs",
+          "entity_id": "55555555555555555555555555555555",
+          "operation_id": null,
+          "client_generation": 0,
+          "client_sequence": 1
+        },
+        "nonce": "AgICAgICAgICAgIC",
+        "ciphertext": "ZS28EKyc9W3-McNlIAKQpvPtVzPZbs0jrKgPbI-J1dsy-GRT2SXECJX7-mofM8qI3uGigadMZSpyM5-e7EjXHGa4KgX1ziP3QoZVKEctzYxJ6jGscqXYmuDwyP9AwKAvrZ_28B9v6JTPj5zCT0mdtCKEo7-mKHYAvCmjCaW-NtHpX8fxp2BC",
+        "authentication_tag": "FOIj5u1sHZrbQRM5eICqqg"
+      },
+      "canonical_aad": "orbit-navigator|sync-aad|protocol=1|schema=1|profile=22222222222222222222222222222222|device=11111111111111111111111111111111|keyset=33333333333333333333333333333333|keyepoch=0|kind=upsert|envelope=77777777777777777777777777777777|category=opentabs|entity=55555555555555555555555555555555|operation=-|clientgeneration=0|clientsequence=1",
+      "plaintext_hex": "52534e4f010255555555555555555555555555555555070000000000000000206d836a24df082e00000068747470733a2f2f666978747572652e696e76616c69642f6e657665722d75706c6f61642d706c61696e746578741500000046697874757265207469746c6520cea920f09f9a8003000000010d000000466978747572652067726f7570",
+      "category_key_hex": "1f2f60c37c96423e386981bdad003a111a518f7441be4a64df6ccd8f4a8054c6"
+    },
+    {
+      "record": {
+        "aad": {
+          "protocol_version": 1,
+          "schema_version": 1,
+          "profile_id": "22222222222222222222222222222222",
+          "device_id": "11111111111111111111111111111111",
+          "keyset_id": "33333333333333333333333333333333",
+          "key_epoch": 0,
+          "record_kind": "tombstone",
+          "envelope_id": "88888888888888888888888888888888",
+          "category": "history",
+          "entity_id": "55555555555555555555555555555555",
+          "operation_id": null,
+          "client_generation": 0,
+          "client_sequence": 2
+        },
+        "nonce": "AwMDAwMDAwMDAwMD",
+        "ciphertext": "ojcP6qX9K0uHKujHTBFFBxNFi27dke4WkVB6XW7b",
+        "authentication_tag": "huDS375jr047cKXhvvA2Fw"
+      },
+      "canonical_aad": "orbit-navigator|sync-aad|protocol=1|schema=1|profile=22222222222222222222222222222222|device=11111111111111111111111111111111|keyset=33333333333333333333333333333333|keyepoch=0|kind=tombstone|envelope=88888888888888888888888888888888|category=history|entity=55555555555555555555555555555555|operation=-|clientgeneration=0|clientsequence=2",
+      "plaintext_hex": "54534e4f0100555555555555555555555555555555550000000000000000",
+      "category_key_hex": "1093e54cffc14c047fb2dfd52be7790a2393902a074cf9762a2fac5df721f637"
+    }
+  ]
+}

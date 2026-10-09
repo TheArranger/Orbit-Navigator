@@ -161,6 +161,7 @@ public sealed class BrowserChromeControl : Grid
     private readonly Button windowCloseButton;
 
     private BrowserState? browserState;
+    private readonly Func<KeyEventArgs, ModifierKeys> shortcutModifierResolver;
     private TabStripViewState? tabStrip;
     private IReadOnlyDictionary<BrowserTabGroupId, TabGroupPresentation> groupPresentations =
         new Dictionary<BrowserTabGroupId, TabGroupPresentation>();
@@ -194,8 +195,16 @@ public sealed class BrowserChromeControl : Grid
 
     public const double CaptionHostWidth = 210;
 
-    public BrowserChromeControl()
+    public BrowserChromeControl() : this(static args => args.KeyboardDevice.Modifiers)
     {
+    }
+
+    // Keep keyboard devices owned by WPF. Tests can control modifier state
+    // without attaching extra input/text-composition managers to the dispatcher.
+    internal BrowserChromeControl(Func<KeyEventArgs, ModifierKeys> shortcutModifierResolver)
+    {
+        this.shortcutModifierResolver = shortcutModifierResolver ??
+            throw new ArgumentNullException(nameof(shortcutModifierResolver));
         MinHeight = 104;
         Focusable = true;
         AutomationProperties.SetName(this, "Orbit Navigator browser chrome");
@@ -1856,10 +1865,15 @@ public sealed class BrowserChromeControl : Grid
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs args)
     {
-        var modifiers = args.KeyboardDevice.Modifiers;
+        var modifiers = shortcutModifierResolver(args);
         var shortcutKey = args.Key == Key.System ? args.SystemKey : args.Key;
         if (isFullscreen && shortcutKey == Key.Escape)
         {
+            // WebView2 forwards Escape accelerators into WPF's routed input
+            // pipeline. Leave content-origin input unhandled so Chromium can
+            // honor Keyboard Lock (including its hold-Escape safety exit) or
+            // apply its ordinary fullscreen Escape behavior.
+            if (IsWebContentInputOrigin(args.OriginalSource)) return;
             FullscreenExitRequested?.Invoke(this, EventArgs.Empty);
             args.Handled = true;
         }
@@ -1926,6 +1940,29 @@ public sealed class BrowserChromeControl : Grid
             permissionPresenter.Dismiss();
             args.Handled = true;
         }
+    }
+
+    private bool IsWebContentInputOrigin(object? source)
+    {
+        DependencyObject? current = source as DependencyObject;
+        while (current is not null)
+        {
+            if (ReferenceEquals(current, contentHost)) return true;
+            current = InputParent(current);
+        }
+        return false;
+    }
+
+    private static DependencyObject? InputParent(DependencyObject current)
+    {
+        if (current is ContentElement content)
+        {
+            return ContentOperations.GetParent(content) ??
+                (content as FrameworkContentElement)?.Parent;
+        }
+        return current is Visual
+            ? VisualTreeHelper.GetParent(current)
+            : LogicalTreeHelper.GetParent(current);
     }
 
     private void OnPermissionStateChanged(
