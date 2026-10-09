@@ -16,4 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\OrbitNavigator.Updates\OrbitNavigator.Updates.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\OrbitNavigator.App\Updates\PrimaryUpdateTrust.cs" Link="PrimaryUpdateTrust.cs" />
+  </ItemGroup>
 </Project>

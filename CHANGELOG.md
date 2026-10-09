@@ -6,7 +6,21 @@ is bundled with the browser for offline reading in Settings.
 
 ## Unreleased
 
-No unreleased changes.
+No additional unreleased Windows changes.
+
+## 0.2.2 - 2026-10-08
+
+- Combine the Windows improvements from the 0.2.1 development cycle with the
+  fullscreen Escape correction. Keyboard-locked web applications can receive
+  a short Escape press; normal browser fullscreen exit remains engine-owned.
+- Add Settings → Report a problem, opening the Portfolio's private work-order
+  form. Reports require your review and submission; no browsing data or
+  diagnostics are sent automatically. Including the app version is optional.
+- Harden My Orbit account-link protocol validation, callback handling and
+  UI-safe status behavior. This does not enable cross-device browsing sync.
+- Android and encrypted tab/history sync remain in development, unavailable
+  in this Windows release. Live My Orbit provider deployment and real sign-in
+  acceptance remain separate requirements; local browsing needs no account.
 
 ## 0.1.28 - 2026-10-02
 

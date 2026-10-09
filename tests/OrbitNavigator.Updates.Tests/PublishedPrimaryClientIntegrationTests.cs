@@ -1,4 +1,6 @@
 using System.Net;
+using System.Globalization;
+using OrbitNavigator.App.Updates;
 using OrbitNavigator.Contracts.Common;
 using Xunit;
 using Xunit.Abstractions;
@@ -15,6 +17,13 @@ public sealed class PublishedPrimaryClientIntegrationTests(ITestOutputHelper out
         var expectedText = Environment.GetEnvironmentVariable("ORBIT_PRIMARY_CLIENT_SMOKE_VERSION");
         if (string.IsNullOrWhiteSpace(expectedText)) return;
         var expectedVersion = Version.Parse(expectedText);
+        var installedText = Environment.GetEnvironmentVariable("ORBIT_PRIMARY_CLIENT_SMOKE_INSTALLED_VERSION");
+        var installedVersion = string.IsNullOrWhiteSpace(installedText)
+            ? new Version(0, 1, 26) : Version.Parse(installedText);
+        var highWaterText = Environment.GetEnvironmentVariable("ORBIT_PRIMARY_CLIENT_SMOKE_HIGH_WATER");
+        var highWater = string.IsNullOrWhiteSpace(highWaterText)
+            ? 0 : long.Parse(highWaterText, NumberStyles.None, CultureInfo.InvariantCulture);
+        Assert.True(highWater >= 0, "Installed release high-water mark must be nonnegative.");
         var root = Path.Combine(Path.GetTempPath(), "OrbitUpdateClientSmoke", Guid.NewGuid().ToString("N"));
         var statePath = Path.Combine(root, "client.json");
         var stagingPath = Path.Combine(root, "staging");
@@ -24,7 +33,9 @@ public sealed class PublishedPrimaryClientIntegrationTests(ITestOutputHelper out
         var responses = new List<HttpStatusCode>();
         try
         {
-            await using (var client = Create(new Version(0, 1, 26)))
+            await new FileUpdateClientStateStore(statePath).SaveAsync(
+                UpdateClientState.CreateNew().WithAcceptedReleaseSequence(UpdateReleaseChannel.Primary, highWater), token);
+            await using (var client = Create(installedVersion))
             {
                 await client.InitializeAsync(token);
                 AssertSuccess(await client.CheckAsync(token), PrimaryUpdateLifecycle.Available);
@@ -40,7 +51,7 @@ public sealed class PublishedPrimaryClientIntegrationTests(ITestOutputHelper out
                 output.WriteLine("Verified public 200 -> 304 Available -> download -> 304 ReadyToInstall; confirmation still mandatory.");
             }
 
-            await using (var restarted = Create(new Version(0, 1, 26)))
+            await using (var restarted = Create(installedVersion))
             {
                 await restarted.InitializeAsync(token);
                 AssertSuccess(await restarted.CheckAsync(token), PrimaryUpdateLifecycle.ReadyToInstall);
@@ -79,9 +90,7 @@ public sealed class PublishedPrimaryClientIntegrationTests(ITestOutputHelper out
         PrimaryUpdateClient Create(Version installedVersion) => new(
             new HttpClient(new ObserveFeedHandler(responses)) { Timeout = TimeSpan.FromMinutes(4) },
             new FileUpdateClientStateStore(statePath),
-            new UpdateManifestPublicKey(
-                "beta-2026-01",
-                "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEzZG37N2DsbnjTeudIUh7XU0+eSbCxVtUoBI22iSs+77KAwQtlCeIN8THHz7l+/U7+SwMYRVF2sirkfjt0ExG8A=="),
+            PrimaryUpdateTrust.ManifestKey,
             new WindowsAuthenticodeTrustInspector(),
             launcher,
             stagingPath,

@@ -16,7 +16,7 @@ New-Item -ItemType Directory -Path $launcherOutput -Force | Out-Null
 
 & $dotnet publish (Join-Path $projectRoot "src\OrbitNavigator.Launcher\OrbitNavigator.Launcher.csproj") `
     --configuration $Configuration `
-    --runtime win-x64 `
+    -p:RestoreLockedMode=true `
     --self-contained true `
     -p:Version=$Version `
     --output $launcherOutput `

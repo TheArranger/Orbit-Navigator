@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <OrbitProductVersion>0.1.28</OrbitProductVersion>
+    <OrbitProductVersion>0.2.2</OrbitProductVersion>
     <Version>$(OrbitProductVersion)</Version>
   </PropertyGroup>
 </Project>

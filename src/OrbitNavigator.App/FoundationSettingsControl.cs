@@ -3,6 +3,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using OrbitNavigator.App.Accounts;
+using OrbitNavigator.App.Support;
 using OrbitNavigator.Contracts.Browser;
 using OrbitNavigator.Contracts.Common;
 using OrbitNavigator.Contracts.Updates;
@@ -22,6 +23,7 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
     private readonly MyOrbitAccountSettingsAdapter _myOrbitAccountSettings;
     private readonly PrimaryUpdateClient _updates;
     private readonly Func<BrowsingContext?> _accountContext;
+    private readonly Func<Uri, Task<bool>>? _openSupportPage;
     private readonly MyOrbitAccountSettingsControl _account = new()
     {
         ReducedMotion = !SystemParameters.ClientAreaAnimation,
@@ -37,13 +39,15 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
         IBrowserSettingsFacade settings,
         MyOrbitAccountSettingsAdapter myOrbitAccountSettings,
         PrimaryUpdateClient updates,
-        Func<BrowsingContext?> accountContext)
+        Func<BrowsingContext?> accountContext,
+        Func<Uri, Task<bool>>? openSupportPage = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _myOrbitAccountSettings = myOrbitAccountSettings ?? throw new ArgumentNullException(nameof(myOrbitAccountSettings));
         _updates = updates ?? throw new ArgumentNullException(nameof(updates));
         _accountContext = accountContext ?? throw new ArgumentNullException(nameof(accountContext));
+        _openSupportPage = openSupportPage;
         ApplySettingsSurfaceTheme(this);
     }
 
@@ -229,6 +233,7 @@ internal sealed class FoundationSettingsControl : UserControl, IDisposable
         panel.Children.Add(save);
         panel.Children.Add(status);
         panel.Children.Add(CreateChangelogSection());
+        panel.Children.Add(new ProblemReportControl(typeof(App).Assembly.GetName().Version, _openSupportPage));
         panel.Children.Add(_account);
         return CreateSettingsScrollSurface(panel);
     }

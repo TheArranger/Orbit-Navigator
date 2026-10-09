@@ -466,6 +466,7 @@ public sealed class MyOrbitAccountSettingsAdapter
         "account.link.reauthorization-required" => "My Orbit requires authorization again before account management can continue.",
         "account.link.revocation-pending" => "Disconnect is pending and will be retried securely.",
         "account.link.browser-launch-failed" => "The default browser could not be opened for My Orbit linking.",
+        "account.link.external-browser-unavailable" => ExternalBrowserUnavailableCopy,
         "account.link.provider-unavailable" => "My Orbit account linking is currently unavailable. Local browsing still works.",
         "account.link.failed" or "account.link.callback-invalid" or "account.link.credential-save-failed" =>
             "My Orbit account linking did not complete. No browsing data was synced.",
@@ -492,6 +493,7 @@ public sealed class MyOrbitAccountSettingsAdapter
         "error.private.remote_operation_denied" => "My Orbit account operations are unavailable in private windows.",
         "account.link.provider-unavailable" => "My Orbit account linking is currently unavailable. Local browsing still works.",
         "account.link.browser-launch-failed" => "The default browser could not be opened for My Orbit linking.",
+        "account.link.external-browser-unavailable" => ExternalBrowserUnavailableCopy,
         "account.link.rate-limited" => "My Orbit is temporarily limiting requests. Try again later.",
         "account.link.reauthorization-required" => "My Orbit requires authorization again.",
         "account.link.cancelled" => "The My Orbit account operation was cancelled.",
@@ -507,6 +509,9 @@ public sealed class MyOrbitAccountSettingsAdapter
             _ => "The My Orbit account operation could not be completed.",
         },
     };
+
+    private const string ExternalBrowserUnavailableCopy =
+        "My Orbit linking requires an external browser. Set a browser other than Orbit Navigator as your Windows default and try again.";
 
     private static SyncOperationId NewOperationId() => new(Guid.NewGuid());
 

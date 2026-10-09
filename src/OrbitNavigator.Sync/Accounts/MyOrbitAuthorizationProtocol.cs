@@ -14,11 +14,15 @@ internal sealed class MyOrbitAuthorizationProtocol : IMyOrbitAuthorizationProtoc
 {
     internal const string ClientId = "orbit-navigator";
     internal const string LinkScope = "orbit.navigator.link";
+    internal const string TabsHistorySyncScope =
+        "orbit.navigator.link orbit.sync.history orbit.sync.open_tabs orbit.sync.devices";
     private const int MaximumResponseBytes = 64 * 1024;
     private readonly Uri _authority;
     private readonly HttpClient _http;
     private readonly IClock _clock;
     private readonly bool _ownsHandler;
+    private readonly string _requiredScope;
+    private readonly HashSet<string> _requiredScopeSet;
 
     public MyOrbitAuthorizationProtocol(MyOrbitAccountProviderOptions options, IClock clock)
         : this(options, clock, CreateHandler(), ownsHandler: true)
@@ -30,11 +34,23 @@ internal sealed class MyOrbitAuthorizationProtocol : IMyOrbitAuthorizationProtoc
         IClock clock,
         HttpMessageHandler handler,
         bool ownsHandler = false)
+        : this(options, clock, handler, ownsHandler, LinkScope)
+    {
+    }
+
+    private MyOrbitAuthorizationProtocol(
+        MyOrbitAccountProviderOptions options,
+        IClock clock,
+        HttpMessageHandler handler,
+        bool ownsHandler,
+        string requiredScope)
     {
         ArgumentNullException.ThrowIfNull(options);
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _authority = options.Authority;
         _ownsHandler = ownsHandler;
+        _requiredScope = requiredScope;
+        _requiredScopeSet = new(requiredScope.Split(' '), StringComparer.Ordinal);
         _http = new HttpClient(handler, disposeHandler: ownsHandler)
         {
             BaseAddress = _authority,
@@ -43,6 +59,14 @@ internal sealed class MyOrbitAuthorizationProtocol : IMyOrbitAuthorizationProtoc
         _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         _http.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoStore = true };
     }
+
+    // Only the distinct sync-consent adapter may select this fixed scope set.
+    // The account-link constructor and account credential vault remain link-only.
+    internal static MyOrbitAuthorizationProtocol ForTabsHistorySyncConsent(
+        MyOrbitAccountProviderOptions options,
+        IClock clock,
+        HttpMessageHandler? handler = null) =>
+        new(options, clock, handler ?? CreateHandler(), handler is null, TabsHistorySyncScope);
 
     public async ValueTask<ControllerResult<MyOrbitPushedAuthorization>> PushAuthorizationAsync(
         MyOrbitPushedAuthorizationRequest request,
@@ -56,7 +80,7 @@ internal sealed class MyOrbitAuthorizationProtocol : IMyOrbitAuthorizationProtoc
         using var content = ZeroingFormContent.Create(
             ("client_id", ClientId),
             ("redirect_uri", request.RedirectUri.AbsoluteUri),
-            ("scope", LinkScope),
+            ("scope", _requiredScope),
             ("state", request.State),
             ("code_challenge", request.CodeChallenge),
             ("code_challenge_method", "S256"),
@@ -235,8 +259,33 @@ internal sealed class MyOrbitAuthorizationProtocol : IMyOrbitAuthorizationProtoc
             return ControllerResult<MyOrbitTokenSet>.Failure(response.Error!);
         using var owned = response.Value!;
         if (owned.StatusCode != HttpStatusCode.OK)
+        {
+            // OAuth refresh-token reuse/revocation is normally returned as HTTP
+            // 400 invalid_grant, not 401. Do not mislabel it as retryable offline.
+            if (owned.StatusCode == HttpStatusCode.BadRequest && IsInvalidGrant(owned.Payload))
+                return ControllerResult<MyOrbitTokenSet>.Failure(ControllerError.Create(
+                    ControllerErrorCode.Expired, "account.link.reauthorization-required"));
             return ProviderFailure<MyOrbitTokenSet>(owned.StatusCode);
+        }
         return ParseTokenSet(owned.Payload);
+    }
+
+    private static bool IsInvalidGrant(byte[] payload)
+    {
+        try
+        {
+            using var json = JsonDocument.Parse(payload);
+            if (json.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            var errors = json.RootElement.EnumerateObject()
+                .Where(property => property.NameEquals("error")).ToArray();
+            return errors.Length == 1 && errors[0].Value.ValueKind == JsonValueKind.String &&
+                errors[0].Value.GetString() == "invalid_grant";
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private ControllerResult<MyOrbitTokenSet> ParseTokenSet(byte[] payload)
@@ -288,10 +337,11 @@ internal sealed class MyOrbitAuthorizationProtocol : IMyOrbitAuthorizationProtoc
             if (reader.TokenType != JsonTokenType.EndObject || reader.Read())
                 return Integrity<MyOrbitTokenSet>();
 
-            if (tokenType != "Bearer" || scope != LinkScope ||
+            if (tokenType != "Bearer" || !HasExactGrantedScopes(scope) ||
                 access is null || refresh is null ||
                 !ValidAccessToken(access) || !ValidRefreshToken(refresh) ||
                 !Guid.TryParseExact(connection, "N", out var connectionId) ||
+                connectionId == Guid.Empty || connection != connectionId.ToString("N") ||
                 expiresIn is < 30 or > 3600 ||
                 !DateTimeOffset.TryParse(refreshExpiry, CultureInfo.InvariantCulture,
                     DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var refreshExpires) ||
@@ -319,6 +369,18 @@ internal sealed class MyOrbitAuthorizationProtocol : IMyOrbitAuthorizationProtoc
             if (access is not null) CryptographicOperations.ZeroMemory(access);
             if (refresh is not null) CryptographicOperations.ZeroMemory(refresh);
         }
+    }
+
+    private bool HasExactGrantedScopes(string? scope)
+    {
+        if (scope is null) return false;
+        // RFC 6749 section 3.3: scope tokens are case-sensitive and unordered.
+        // Retain exact grant boundaries; do not normalize case, accept arbitrary
+        // whitespace, discard empty tokens, or hide duplicates in a set.
+        var tokens = scope.Split(' ', StringSplitOptions.None);
+        if (tokens.Length != _requiredScopeSet.Count) return false;
+        var granted = new HashSet<string>(tokens, StringComparer.Ordinal);
+        return granted.Count == tokens.Length && _requiredScopeSet.SetEquals(granted);
     }
 
     private async ValueTask<ControllerResult<OwnedResponse>> SendAsync(

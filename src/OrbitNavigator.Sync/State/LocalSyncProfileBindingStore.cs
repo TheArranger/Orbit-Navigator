@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using OrbitNavigator.Contracts.Common;
 using OrbitNavigator.Contracts.Infrastructure;
 using OrbitNavigator.Contracts.Sync;
@@ -32,10 +33,16 @@ public sealed class LocalSyncProfileBindingStore
         ProfileStorageKey.Create("account-profile-binding").Value!;
 
     private readonly IProfileStorage _storage;
+    // The host owns one storage adapter. Serialize first binds across store
+    // instances using that adapter, since a missing revision is not create-only
+    // in IProfileStorage. This is not a cross-process compare-and-swap primitive.
+    private static readonly ConditionalWeakTable<IProfileStorage, SemaphoreSlim> StorageGates = new();
+    private readonly SemaphoreSlim _gate;
 
     public LocalSyncProfileBindingStore(IProfileStorage storage)
     {
         _storage = storage ?? throw new ArgumentNullException(nameof(storage));
+        _gate = StorageGates.GetValue(storage, _ => new(1, 1));
     }
 
     public ValueTask<ControllerResult<LocalSyncProfileBinding>> LoadAsync(
@@ -72,6 +79,23 @@ public sealed class LocalSyncProfileBindingStore
     }
 
     private async ValueTask<ControllerResult<LocalSyncProfileBinding>> BindAuthorizedAsync(
+        SyncOperationContext context,
+        ProfileId syncProfileId,
+        LocalSyncProfileBindingKind kind,
+        CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await BindUnderGateAsync(context, syncProfileId, kind, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async ValueTask<ControllerResult<LocalSyncProfileBinding>> BindUnderGateAsync(
         SyncOperationContext context,
         ProfileId syncProfileId,
         LocalSyncProfileBindingKind kind,

@@ -93,7 +93,7 @@
       "orbitnavigator.privacy": {
         "type": "Project",
         "dependencies": {
-          "OrbitNavigator.Contracts": "[0.1.28, )"
+          "OrbitNavigator.Contracts": "[0.2.2, )"
         }
       }
     }

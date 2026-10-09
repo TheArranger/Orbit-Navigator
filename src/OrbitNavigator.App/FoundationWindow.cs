@@ -1180,7 +1180,20 @@ public sealed class FoundationWindow : Window
         _settings,
         _myOrbitAccountSettings,
         _updates,
-        () => new BrowsingContext(_privacy, _windowId, tabId, null));
+        () => new BrowsingContext(_privacy, _windowId, tabId, null),
+        OpenProblemReportPageAsync);
+
+    private async Task<bool> OpenProblemReportPageAsync(Uri target)
+    {
+        if (!Support.ProblemReportRoute.IsAllowed(target, typeof(App).Assembly.GetName().Version) ||
+            _windowLifetime.IsCancellationRequested)
+            return false;
+        var newTabId = new BrowserTabId(Guid.NewGuid());
+        await CreateTabAsync(new CreateTabBrowserCommand(_windowId, newTabId, target, null));
+        // This means a navigation was accepted, never that a work order was sent.
+        return _hosts.ContainsKey(newTabId) &&
+            _browserState.Tabs.Any(tab => tab.TabId == newTabId && tab.Address is not null);
+    }
 
     private async Task ReloadSettingsTabAsync(BrowserTabId tabId)
     {
